@@ -2,6 +2,42 @@
 
 import numpy as np
 import ollama
+import pymupdf4llm
+from docling.document_converter import DocumentConverter
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.output import text_from_rendered
+from markitdown import MarkItDown
+
+# %%
+
+doc = pymupdf4llm.to_markdown("input_test.pdf")
+with open("extracted_pymupdf.md", "w") as f:
+    f.write(doc)
+
+# %%
+
+md = MarkItDown()
+result = md.convert("input_test.pdf")
+with open("extracted_markitdown.md", "w") as f:
+    f.write(result.markdown)
+# %%
+
+converter = DocumentConverter()
+result = converter.convert("input_test.pdf")
+with open("extracted_docling.md", "w") as f:
+    f.write(result.document.export_to_markdown())
+
+
+# %%
+
+converter = PdfConverter(
+    artifact_dict=create_model_dict(),
+)
+rendered = converter("input_test.pdf")
+text, _, images = text_from_rendered(rendered)
+with open("extracted_marker.md", "w") as f:
+    f.write(text)
 
 # %%
 
@@ -54,7 +90,6 @@ def retrieve(query: str, top_n: int = 3):
     )
 
     similarities = cosine_similarity(query_embedding, vectors)
-    print(similarities.shape)
     top_idx = np.argsort(-similarities)[:top_n]
     return [(chunks[idx], similarities[idx]) for idx in top_idx]
 
