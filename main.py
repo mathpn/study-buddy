@@ -21,7 +21,8 @@ Hamming worked on weekends, and grew increasingly frustrated with having to rest
 
 embedding_model = "nomic-embed-text"
 
-chunk_vectors = []
+chunks = []
+vectors = []
 
 
 def extract_embedding(chunk):
@@ -31,26 +32,31 @@ def extract_embedding(chunk):
 
 for i, chunk in enumerate(l.strip() for l in doc.split("\n") if l.strip()):
     emb = extract_embedding(chunk)
-    chunk_vectors.append((chunk, np.array(emb)))
+    chunks.append(chunk)
+    vectors.append(np.array(emb))
     print(f"Added chunk {i+1} to vectors")
+
+vectors = np.concatenate(vectors)
+vectors.shape
 
 # %%
 
 
 def cosine_similarity(a, b):
-    return a @ b.T / (np.linalg.norm(a) * np.linalg.norm(b))
+    a = a / np.linalg.norm(a, axis=-1, keepdims=True)
+    b = b / np.linalg.norm(b, axis=-1, keepdims=True)
+    return a @ b.T
 
 
 def retrieve(query: str, top_n: int = 3):
-    query_embedding = ollama.embed(model=embedding_model, input=query)["embeddings"][0]
+    query_embedding = np.array(
+        ollama.embed(model=embedding_model, input=query)["embeddings"][0]
+    )
 
-    similarities = []
-    for chunk, embedding in chunk_vectors:
-        similarity = cosine_similarity(query_embedding, embedding)
-        similarities.append((chunk, similarity))
-
-    similarities.sort(key=lambda x: x[1], reverse=True)
-    return similarities[:top_n]
+    similarities = cosine_similarity(query_embedding, vectors)
+    print(similarities.shape)
+    top_idx = np.argsort(-similarities)[:top_n]
+    return [(chunks[idx], similarities[idx]) for idx in top_idx]
 
 
-retrieve("ECC memory")
+retrieve("ECC memory.")
