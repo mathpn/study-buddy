@@ -1,0 +1,17 @@
+[project]
+name = "study-thing"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.3.1",
+    "ollama>=0.5.1",
+    "pydantic>=2.11.7",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.29.5",
+    "ipython>=9.4.0",
+]
