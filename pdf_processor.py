@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import ollama
+from pydantic.deprecated.config import Extra
 import pymupdf4llm
 from docling.document_converter import DocumentConverter
 from marker.converters.pdf import PdfConverter
@@ -123,29 +124,21 @@ class PDFProcessor:
         """Initialize PDF extraction backends"""
         self.backends = {}
 
-        try:
+        if self.extraction_backend == ExtractionBackend.DOCLING:
             self.backends[ExtractionBackend.DOCLING] = DocumentConverter()
             logger.info("Docling backend initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize Docling backend: {e}")
-
-        try:
+        elif self.extraction_backend == ExtractionBackend.MARKER:
             self.backends[ExtractionBackend.MARKER] = PdfConverter(
-                artifact_dict=create_model_dict(),
+                artifact_dict=create_model_dict()
             )
             logger.info("Marker backend initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize Marker backend: {e}")
-
-        try:
+        elif self.extraction_backend == ExtractionBackend.MARKITDOWN:
             self.backends[ExtractionBackend.MARKITDOWN] = MarkItDown()
             logger.info("MarkItDown backend initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize MarkItDown backend: {e}")
 
-        logger.info("PDF extraction backends initialized")
-
-    def extract_content(self, pdf_path: Union[str, Path]) -> Tuple[str, List[Image.Image]]:
+    def extract_content(
+        self, pdf_path: Union[str, Path]
+    ) -> Tuple[str, List[Image.Image]]:
         """
         Extract text and images from PDF using selected backend
 
