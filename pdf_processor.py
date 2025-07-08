@@ -22,7 +22,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import ollama
-from pydantic.deprecated.config import Extra
 import pymupdf4llm
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
@@ -84,6 +83,136 @@ class ProcessedDocument:
     metadata: Dict[str, Any]
 
 
+def _extract_docling(pdf_path):
+    pipeline_options = PdfPipelineOptions()
+    # pipeline_options.do_formula_enrichment = True  # Disabled to avoid memory issues
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+        }
+    )
+    logger.info("Docling backend initialized")
+    result = converter.convert(str(pdf_path))
+    text = result.document.export_to_markdown()
+    images = _extract_images_docling(result)
+    return text, images
+
+
+def _extract_images_docling(docling_result):
+    """Extract images using docling with captions."""
+    images_and_text = []
+    doc = docling_result.document
+
+    for picture in doc.pictures:
+        try:
+            pil_image = picture.get_image(doc)
+            if pil_image is None:
+                logger.warning(
+                    f"No image data available for picture {picture.get_ref()}"
+                )
+                continue
+
+            caption_text = picture.caption_text(doc)
+            page_number = 1
+            if hasattr(picture, "prov") and picture.prov:
+                page_number = picture.prov[0].page_no
+
+            images_and_text.append(
+                {
+                    "image": pil_image,
+                    "caption": caption_text.strip(),
+                    "page_number": page_number,
+                }
+            )
+
+            logger.debug(
+                f"Extracted image from page {page_number} with {len(caption_text)} chars of caption"
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to extract image: {e}")
+
+    return images_and_text
+
+
+def _extract_images_pymupdf(doc_source):
+    """Extract images using PyMuPDF"""
+    import fitz  # PyMuPDF
+
+    images_and_text = []
+    doc = fitz.open(str(doc_source))
+
+    for page_num in range(len(doc)):
+        page = doc.load_page(page_num)
+
+        # Get text blocks with positioning information
+        text_blocks = page.get_text("dict")
+        image_list = page.get_images(full=True)
+
+        for img_index, img in enumerate(image_list):
+            try:
+                xref = img[0]
+                pix = fitz.Pixmap(doc, xref)
+
+                img_rect = (
+                    page.get_image_rects(xref)[0]
+                    if page.get_image_rects(xref)
+                    else None
+                )
+
+                caption_text = ""
+                if img_rect:
+                    caption_blocks = []
+
+                    for block in text_blocks["blocks"]:
+                        if "lines" in block:
+                            block_rect = fitz.Rect(block["bbox"])
+
+                            if (
+                                block_rect.y0 >= img_rect.y1
+                                and block_rect.y0 - img_rect.y1 < 50
+                            ):
+                                caption_blocks.append(block)
+
+                    caption_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
+                    for block in caption_blocks[:2]:
+                        for line in block["lines"]:
+                            for span in line["spans"]:
+                                caption_text += span["text"] + " "
+
+                if pix.n - pix.alpha < 4:  # GRAY or RGB
+                    img_data = pix.tobytes("png")
+                    images_and_text.append(
+                        {
+                            "image": Image.open(io.BytesIO(img_data)),
+                            "caption": caption_text.strip(),
+                            "page_number": page_num + 1,
+                        }
+                    )
+                    logger.debug(
+                        f"Extracted image from page {page_num+1} with {len(caption_text)} chars of caption"
+                    )
+                pix = None
+            except Exception as e:
+                logger.warning(
+                    f"Failed to extract image {img_index} from page {page_num}: {e}"
+                )
+    doc.close()
+    return images_and_text
+
+
+def _extract_pymupdf(doc_source):
+    text = pymupdf4llm.to_markdown(str(doc_source))
+    images = _extract_images_pymupdf(doc_source)
+    return text, images
+
+
+if __name__ == "__main__":
+    _, img = _extract_pymupdf("input_test.pdf")
+    # _, img = _extract_docling("input_test.pdf")
+    print(img)
+
+
 class PDFProcessor:
     """Main PDF processing class"""
 
@@ -117,19 +246,6 @@ class PDFProcessor:
         self.chunk_overlap = chunk_overlap
         self.extract_images = extract_images
 
-    def _init_backends(self):
-        """Initialize PDF extraction backends"""
-        self.backends = {}
-
-        if self.extraction_backend == ExtractionBackend.MARKER:
-            self.backends[ExtractionBackend.MARKER] = PdfConverter(
-                artifact_dict=create_model_dict()
-            )
-            logger.info("Marker backend initialized")
-        elif self.extraction_backend == ExtractionBackend.MARKITDOWN:
-            self.backends[ExtractionBackend.MARKITDOWN] = MarkItDown()
-            logger.info("MarkItDown backend initialized")
-
     def extract_content(
         self, pdf_path: Union[str, Path]
     ) -> Tuple[str, List[Image.Image]]:
@@ -153,7 +269,6 @@ class PDFProcessor:
         images = []
 
         if self.extraction_backend == ExtractionBackend.PYMUPDF:
-            text = pymupdf4llm.to_markdown(str(pdf_path))
             if self.extract_images:
                 images = self._extract_images_pymupdf(pdf_path)
 
@@ -167,40 +282,6 @@ class PDFProcessor:
 
         logger.info(f"Extracted {len(text)} characters and {len(images)} images")
         return text, images
-
-    def _extract_images_pymupdf(self, pdf_path: Path) -> List[Image.Image]:
-        """Extract images using PyMuPDF"""
-        import fitz  # PyMuPDF
-
-        images = []
-        doc = fitz.open(str(pdf_path))
-
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            image_list = page.get_images(full=True)
-
-            for img_index, img in enumerate(image_list):
-                try:
-                    xref = img[0]
-                    pix = fitz.Pixmap(doc, xref)
-
-                    if pix.n - pix.alpha < 4:  # GRAY or RGB
-                        img_data = pix.tobytes("png")
-                        images.append(Image.open(io.BytesIO(img_data)))
-                    pix = None
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to extract image {img_index} from page {page_num}: {e}"
-                    )
-
-        doc.close()
-        return images
-
-    def _extract_images_docling(self, docling_result) -> List[Image.Image]:
-        """Extract images from Docling result"""
-        images = []
-        # TODO: Implement image extraction from Docling result
-        return images
 
     def _extract_images_markitdown(self, pdf_path: Path) -> List[Image.Image]:
         """Extract images using alternative method for MarkItDown"""
