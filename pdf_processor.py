@@ -24,11 +24,12 @@ import numpy as np
 import ollama
 from pydantic.deprecated.config import Extra
 import pymupdf4llm
-from docling.document_converter import DocumentConverter
-from marker.converters.pdf import PdfConverter
-from marker.models import create_model_dict
-from marker.output import text_from_rendered
-from markitdown import MarkItDown
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import (
+    PdfPipelineOptions,
+    PictureDescriptionApiOptions,
+)
+from docling.document_converter import DocumentConverter, PdfFormatOption
 from PIL import Image
 
 logging.basicConfig(level=logging.INFO)
@@ -40,8 +41,6 @@ class ExtractionBackend(Enum):
 
     PYMUPDF = "pymupdf"
     DOCLING = "docling"
-    MARKER = "marker"
-    MARKITDOWN = "markitdown"
 
 
 class ChunkingStrategy(Enum):
@@ -118,16 +117,11 @@ class PDFProcessor:
         self.chunk_overlap = chunk_overlap
         self.extract_images = extract_images
 
-        self._init_backends()
-
     def _init_backends(self):
         """Initialize PDF extraction backends"""
         self.backends = {}
 
-        if self.extraction_backend == ExtractionBackend.DOCLING:
-            self.backends[ExtractionBackend.DOCLING] = DocumentConverter()
-            logger.info("Docling backend initialized")
-        elif self.extraction_backend == ExtractionBackend.MARKER:
+        if self.extraction_backend == ExtractionBackend.MARKER:
             self.backends[ExtractionBackend.MARKER] = PdfConverter(
                 artifact_dict=create_model_dict()
             )
@@ -164,25 +158,7 @@ class PDFProcessor:
                 images = self._extract_images_pymupdf(pdf_path)
 
         elif self.extraction_backend == ExtractionBackend.DOCLING:
-            converter = self.backends[ExtractionBackend.DOCLING]
-            result = converter.convert(str(pdf_path))
-            text = result.document.export_to_markdown()
-            if self.extract_images:
-                images = self._extract_images_docling(result)
-
-        elif self.extraction_backend == ExtractionBackend.MARKER:
-            converter = self.backends[ExtractionBackend.MARKER]
-            rendered = converter(str(pdf_path))
-            text, _, marker_images = text_from_rendered(rendered)
-            if self.extract_images and marker_images:
-                images = marker_images
-
-        elif self.extraction_backend == ExtractionBackend.MARKITDOWN:
-            converter = self.backends[ExtractionBackend.MARKITDOWN]
-            result = converter.convert(str(pdf_path))
-            text = result.markdown
-            if self.extract_images:
-                images = self._extract_images_markitdown(pdf_path)
+            text, images = _extract_docling(pdf_path)
 
         else:
             raise ValueError(
