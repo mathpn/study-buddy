@@ -18,16 +18,14 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 import ollama
 import pymupdf4llm
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import (
-    PdfPipelineOptions,
-    PictureDescriptionApiOptions,
-)
+from docling.datamodel.document import ConversionResult
+from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from PIL import Image
 
@@ -54,11 +52,11 @@ class TextChunk:
     """Container for a text chunk with metadata"""
 
     content: str
-    page_number: Optional[int] = None
+    page_number: int | None = None
     chunk_index: int = 0
-    start_char: Optional[int] = None
-    end_char: Optional[int] = None
-    embedding: Optional[np.ndarray] = None
+    start_char: int | None = None
+    end_char: int | None = None
+    embedding: np.ndarray | None = None
 
 
 @dataclass
@@ -66,25 +64,36 @@ class ImageChunk:
     """Container for an image chunk with metadata"""
 
     image_data: bytes
-    description: Optional[str] = None
-    page_number: Optional[int] = None
+    caption: str
+    description: str | None = None
+    page_number: int | None = None
     image_index: int = 0
     image_format: str = "PNG"
-    embedding: Optional[np.ndarray] = None
+    embedding: np.ndarray | None = None
+
+
+@dataclass
+class ImageElement:
+    """Container for image and metadata extracted from a file"""
+
+    image: Image.Image
+    caption: str
+    page_number: int
 
 
 @dataclass
 class ProcessedDocument:
     """Container for processed document with text and images"""
 
-    text_chunks: List[TextChunk]
-    image_chunks: List[ImageChunk]
+    text_chunks: list[TextChunk]
+    image_chunks: list[ImageChunk]
     raw_text: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
-def _extract_docling(pdf_path):
+def _extract_docling(pdf_path) -> tuple[str, list[ImageElement]]:
     pipeline_options = PdfPipelineOptions()
+    pipeline_options.generate_picture_images = True
     # pipeline_options.do_formula_enrichment = True  # Disabled to avoid memory issues
     converter = DocumentConverter(
         format_options={
@@ -98,7 +107,7 @@ def _extract_docling(pdf_path):
     return text, images
 
 
-def _extract_images_docling(docling_result):
+def _extract_images_docling(docling_result: ConversionResult) -> list[ImageElement]:
     """Extract images using docling with captions."""
     images_and_text = []
     doc = docling_result.document
@@ -118,11 +127,7 @@ def _extract_images_docling(docling_result):
                 page_number = picture.prov[0].page_no
 
             images_and_text.append(
-                {
-                    "image": pil_image,
-                    "caption": caption_text.strip(),
-                    "page_number": page_number,
-                }
+                ImageElement(pil_image, caption_text.strip(), page_number)
             )
 
             logger.debug(
@@ -135,7 +140,7 @@ def _extract_images_docling(docling_result):
     return images_and_text
 
 
-def _extract_images_pymupdf(doc_source):
+def _extract_images_pymupdf(doc_source) -> list[ImageElement]:
     """Extract images using PyMuPDF"""
     import fitz  # PyMuPDF
 
@@ -183,14 +188,14 @@ def _extract_images_pymupdf(doc_source):
                 if pix.n - pix.alpha < 4:  # GRAY or RGB
                     img_data = pix.tobytes("png")
                     images_and_text.append(
-                        {
-                            "image": Image.open(io.BytesIO(img_data)),
-                            "caption": caption_text.strip(),
-                            "page_number": page_num + 1,
-                        }
+                        ImageElement(
+                            Image.open(io.BytesIO(img_data)),
+                            caption_text.strip(),
+                            page_num + 1,
+                        )
                     )
                     logger.debug(
-                        f"Extracted image from page {page_num+1} with {len(caption_text)} chars of caption"
+                        f"Extracted image from page {page_num + 1} with {len(caption_text)} chars of caption"
                     )
                 pix = None
             except Exception as e:
@@ -205,12 +210,6 @@ def _extract_pymupdf(doc_source):
     text = pymupdf4llm.to_markdown(str(doc_source))
     images = _extract_images_pymupdf(doc_source)
     return text, images
-
-
-if __name__ == "__main__":
-    _, img = _extract_pymupdf("input_test.pdf")
-    # _, img = _extract_docling("input_test.pdf")
-    print(img)
 
 
 class PDFProcessor:
@@ -246,9 +245,7 @@ class PDFProcessor:
         self.chunk_overlap = chunk_overlap
         self.extract_images = extract_images
 
-    def extract_content(
-        self, pdf_path: Union[str, Path]
-    ) -> Tuple[str, List[Image.Image]]:
+    def extract_content(self, pdf_path: str | Path) -> tuple[str, list[ImageElement]]:
         """
         Extract text and images from PDF using selected backend
 
@@ -269,8 +266,7 @@ class PDFProcessor:
         images = []
 
         if self.extraction_backend == ExtractionBackend.PYMUPDF:
-            if self.extract_images:
-                images = self._extract_images_pymupdf(pdf_path)
+            text, images = _extract_pymupdf(pdf_path)
 
         elif self.extraction_backend == ExtractionBackend.DOCLING:
             text, images = _extract_docling(pdf_path)
@@ -283,13 +279,7 @@ class PDFProcessor:
         logger.info(f"Extracted {len(text)} characters and {len(images)} images")
         return text, images
 
-    def _extract_images_markitdown(self, pdf_path: Path) -> List[Image.Image]:
-        """Extract images using alternative method for MarkItDown"""
-        # MarkItDown doesn't directly provide image extraction
-        # Fall back to PyMuPDF for image extraction
-        return self._extract_images_pymupdf(pdf_path)
-
-    def chunk_text(self, text: str) -> List[TextChunk]:
+    def chunk_text(self, text: str) -> list[TextChunk]:
         """
         Chunk text according to selected strategy
 
@@ -308,7 +298,7 @@ class PDFProcessor:
         else:
             raise ValueError(f"Unsupported chunking strategy: {self.chunking_strategy}")
 
-    def _chunk_by_document_structure(self, text: str) -> List[TextChunk]:
+    def _chunk_by_document_structure(self, text: str) -> list[TextChunk]:
         """
         Chunk text by document structure (markdown hierarchy)
 
@@ -341,7 +331,7 @@ class PDFProcessor:
 
         return chunks
 
-    def _split_by_headers(self, text: str) -> List[Dict[str, Any]]:
+    def _split_by_headers(self, text: str) -> list[dict[str, Any]]:
         """Split text into sections based on markdown headers"""
         lines = text.split("\n")
         sections = []
@@ -365,7 +355,7 @@ class PDFProcessor:
 
     def _recursive_structure_chunk(
         self, text: str, header_level: int
-    ) -> List[TextChunk]:
+    ) -> list[TextChunk]:
         """Recursively chunk text while respecting structure"""
         chunks = []
 
@@ -479,7 +469,7 @@ class PDFProcessor:
 
         return chunks
 
-    def _chunk_by_fixed_size(self, text: str) -> List[TextChunk]:
+    def _chunk_by_fixed_size(self, text: str) -> list[TextChunk]:
         """Chunk text by fixed size with overlap"""
         chunks = []
         words = text.split()
@@ -499,7 +489,7 @@ class PDFProcessor:
 
         return chunks
 
-    def generate_text_embeddings(self, chunks: List[TextChunk]) -> List[TextChunk]:
+    def generate_text_embeddings(self, chunks: list[TextChunk]) -> list[TextChunk]:
         """
         Generate embeddings for text chunks
 
@@ -530,8 +520,8 @@ class PDFProcessor:
         return chunks
 
     def caption_and_embed_images(
-        self, image_chunks: List[ImageChunk]
-    ) -> List[ImageChunk]:
+        self, image_chunks: list[ImageChunk]
+    ) -> list[ImageChunk]:
         """
         Generate captions and embeddings for image chunks.
 
@@ -551,9 +541,9 @@ class PDFProcessor:
                 image_b64 = base64.b64encode(chunk.image_data).decode("utf-8")
 
                 # Generate caption using the multimodal model
-                caption_prompt = """Describe this image in detail.
+                caption_prompt = """Describe this image in three sentences.
                 It could be a technical diagram, a chart, a graph, or an illustration from a scientific or academic paper.
-                Focus on the key information presented.
+                Be concise and accurate.
                 Do not write any introduction like "Here is the description", write _only_ the description.
                 """
                 response = ollama.generate(
@@ -567,9 +557,10 @@ class PDFProcessor:
                     f"Generated caption for image {i + 1}/{len(image_chunks)}: {chunk.description[:100]}..."
                 )
 
-                # Generate embedding from the caption using the text embedding model
+                emb_input = f"Image description: {response['response'].strip()}\nImage caption: {chunk.caption}"
+                print(emb_input)
                 embedding = ollama.embed(
-                    model=self.text_embedding_model, input=chunk.description
+                    model=self.text_embedding_model, input=emb_input
                 )["embeddings"][0]
                 chunk.embedding = np.array(embedding)
 
@@ -584,7 +575,7 @@ class PDFProcessor:
 
         return image_chunks
 
-    def process_pdf(self, pdf_path: Union[str, Path]) -> ProcessedDocument:
+    def process_pdf(self, pdf_path: str | Path) -> ProcessedDocument:
         """
         Process a PDF file end-to-end
 
@@ -602,13 +593,19 @@ class PDFProcessor:
 
         image_chunks = []
         if self.extract_images and images:
-            for i, img in enumerate(images):
+            for i, img_element in enumerate(images):
                 img_bytes = io.BytesIO()
-                img.save(img_bytes, format="PNG")
-                img_bytes = img_bytes.getvalue()
+                img_element.image.save(img_bytes, format="PNG")
+                img_bytes = img_bytes.getvalue()  # TODO wasteful saving and loading
 
                 image_chunks.append(
-                    ImageChunk(image_data=img_bytes, image_index=i, image_format="PNG")
+                    ImageChunk(
+                        image_data=img_bytes,
+                        caption=img_element.caption,
+                        page_number=img_element.page_number,
+                        image_index=i,
+                        image_format="PNG",
+                    )
                 )
 
             if image_chunks:
@@ -638,10 +635,10 @@ class VectorStore:
     """Simple vector store for similarity search"""
 
     def __init__(self):
-        self.text_chunks: List[TextChunk] = []
-        self.image_chunks: List[ImageChunk] = []
-        self.text_embeddings: Optional[np.ndarray] = None
-        self.image_embeddings: Optional[np.ndarray] = None
+        self.text_chunks: list[TextChunk] = []
+        self.image_chunks: list[ImageChunk] = []
+        self.text_embeddings: np.ndarray | None = None
+        self.image_embeddings: np.ndarray | None = None
 
     def add_document(self, processed_doc: ProcessedDocument):
         """Add a processed document to the vector store"""
@@ -675,9 +672,10 @@ class VectorStore:
         b = b / np.linalg.norm(b, axis=-1, keepdims=True)
         return a @ b.T
 
+    # TODO remove embedding model param
     def search_text(
         self, query: str, top_k: int = 5, embedding_model: str = "nomic-embed-text"
-    ) -> List[Tuple[TextChunk, float]]:
+    ) -> list[tuple[TextChunk, float]]:
         """Search for similar text chunks"""
         if self.text_embeddings is None or len(self.text_chunks) == 0:
             return []
@@ -699,9 +697,10 @@ class VectorStore:
 
         return results
 
+    # TODO remove embedding model param
     def search_images(
         self, query: str, top_k: int = 5, embedding_model: str = "nomic-embed-text"
-    ) -> List[Tuple[ImageChunk, float]]:
+    ) -> list[tuple[ImageChunk, float]]:
         """Search for similar image chunks based on their descriptions"""
         if self.image_embeddings is None or len(self.image_chunks) == 0:
             return []
@@ -724,19 +723,20 @@ class VectorStore:
         return results
 
     def search_combined(
-        self, query: str, top_k: int = 5, text_weight: float = 0.7
-    ) -> List[Tuple[Union[TextChunk, ImageChunk], float, str]]:
-        """Search both text and images with weighted results"""
-        text_results = self.search_text(query, top_k)
-        image_results = self.search_images(query, top_k)
+        self, query: str, top_k: int = 5
+    ) -> list[tuple[TextChunk | ImageChunk, float, str]]:
+        """Search both text and images, ranking them together"""
+        search_k = top_k * 2
+        text_results = self.search_text(query, search_k)
+        image_results = self.search_images(query, search_k)
 
         combined_results = []
 
         for chunk, score in text_results:
-            combined_results.append((chunk, score * text_weight, "text"))
+            combined_results.append((chunk, score, "text"))
 
         for chunk, score in image_results:
-            combined_results.append((chunk, score * (1 - text_weight), "image"))
+            combined_results.append((chunk, score, "image"))
 
         combined_results.sort(key=lambda x: x[1], reverse=True)
         return combined_results[:top_k]

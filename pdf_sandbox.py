@@ -20,23 +20,23 @@ def main():
         chunking_strategy=ChunkingStrategy.DOCUMENT_STRUCTURE,
         chunk_size=500,
         chunk_overlap=50,
-        extract_images=False, # XXX
+        extract_images=True,
     )
 
-    pdf_path = "input_test.pdf"
+    pdf_path = "input_test_small.pdf"
     if not Path(pdf_path).exists():
         logger.error(f"PDF file not found: {pdf_path}")
         return
 
     processed_doc = processor.process_pdf(pdf_path)
-    print(f"\nProcessing Results:")
+    print("\nProcessing Results:")
     print(f"- Extraction backend: {processed_doc.metadata['extraction_backend']}")
     print(f"- Chunking strategy: {processed_doc.metadata['chunking_strategy']}")
     print(f"- Text chunks: {processed_doc.metadata['num_text_chunks']}")
     print(f"- Image chunks: {processed_doc.metadata['num_image_chunks']}")
     print(f"- Raw text length: {len(processed_doc.raw_text)} characters")
 
-    print(f"\nSample text chunks:")
+    print("\nSample text chunks:")
     for i, chunk in enumerate(processed_doc.text_chunks[:3]):
         print(f"Chunk {i+1}:")
         print(f"  Content: {chunk.content[:100]}...")
@@ -46,7 +46,7 @@ def main():
         print()
 
     if processed_doc.image_chunks:
-        print(f"\nSample image chunks:")
+        print("\nSample image chunks:")
         for i, chunk in enumerate(processed_doc.image_chunks[:2]):
             print(f"Image {i+1}:")
             print(f"  Format: {chunk.image_format}")
@@ -54,6 +54,7 @@ def main():
             print(
                 f"  Description: {chunk.description[:100] if chunk.description else 'None'}..."
             )
+            print(f"  Caption: {chunk.caption[:100] if chunk.caption else 'None'}")
             print(f"  Has embedding: {chunk.embedding is not None}")
             if chunk.embedding is not None:
                 print(f"  Embedding shape: {chunk.embedding.shape}")
@@ -66,21 +67,21 @@ def main():
     print("SEARCH EXAMPLES")
     print("=" * 50)
 
-    query = "error correction"
+    query = "statistical regularity"
     print(f"\nSearching for: '{query}'")
     text_results = vector_store.search_text(query, top_k=3)
 
-    print(f"\nTop text results:")
+    print("\nTop text results:")
     for i, (chunk, score) in enumerate(text_results):
         print(f"{i+1}. Score: {score:.3f}")
         print(f"   Content: {chunk.content[:150]}...")
         print()
 
-    combined_query = "Hamming code"
+    combined_query = "optimization pressure"
     print(f"\nCombined search for: '{combined_query}'")
     combined_results = vector_store.search_combined(combined_query, top_k=5)
 
-    print(f"\nTop combined results:")
+    print("\nTop combined results:")
     for i, (chunk, score, chunk_type) in enumerate(combined_results):
         print(f"{i+1}. Type: {chunk_type}, Score: {score:.3f}")
         if chunk_type == "text":
@@ -90,7 +91,6 @@ def main():
                 f"   Description: {chunk.description[:100] if chunk.description else 'None'}..."
             )
         print()
-
 
 
 def compare_extraction_backends():
@@ -104,8 +104,6 @@ def compare_extraction_backends():
     backends = [
         ExtractionBackend.PYMUPDF,
         ExtractionBackend.DOCLING,
-        ExtractionBackend.MARKER,
-        ExtractionBackend.MARKITDOWN,
     ]
 
     print("Comparing extraction backends...")
