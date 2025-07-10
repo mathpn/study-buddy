@@ -13,11 +13,12 @@ class ModelProvider(ABC):
 
 
 class OllamaModel(ModelProvider):
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, host: str = "http://localhost:11434"):
         self.model_name = model_name
+        self.client = ollama.Client(host)
 
     def generate_with_images(self, prompt: str, images_b64: list[str]) -> str:
-        response = ollama.generate(
+        response = self.client.generate(
             model=self.model_name,
             prompt=prompt,
             images=images_b64,
@@ -26,7 +27,7 @@ class OllamaModel(ModelProvider):
 
     def embed(self, input: str) -> np.ndarray:
         return np.array(
-            ollama.embed(model=self.model_name, input=input)["embeddings"][0]
+            self.client.embed(model=self.model_name, input=input)["embeddings"][0]
         )
 
 
