@@ -21,13 +21,14 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import ollama
 import pymupdf4llm
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.document import ConversionResult
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from PIL import Image
+
+from models import ModelProvider
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -217,8 +218,8 @@ class PDFProcessor:
 
     def __init__(
         self,
-        text_embedding_model: str = "nomic-embed-text",
-        image_captioning_model: str = "qwen2.5vl:3b",
+        text_embedding_model: ModelProvider,
+        image_captioning_model: ModelProvider,
         extraction_backend: ExtractionBackend = ExtractionBackend.DOCLING,
         chunking_strategy: ChunkingStrategy = ChunkingStrategy.DOCUMENT_STRUCTURE,
         chunk_size: int = 500,
@@ -503,10 +504,8 @@ class PDFProcessor:
 
         for i, chunk in enumerate(chunks):
             try:
-                embedding = ollama.embed(
-                    model=self.text_embedding_model, input=chunk.content
-                )["embeddings"][0]
-                chunk.embedding = np.array(embedding)
+                embedding = self.text_embedding_model.embed(chunk.content)
+                chunk.embedding = embedding
 
                 if (i + 1) % 10 == 0:
                     logger.info(
@@ -546,23 +545,19 @@ class PDFProcessor:
                 Be concise and accurate.
                 Do not write any introduction like "Here is the description", write _only_ the description.
                 """
-                response = ollama.generate(
-                    model=self.image_captioning_model,
-                    prompt=caption_prompt,
-                    images=[image_b64],
+                description = self.image_captioning_model.generate_with_images(
+                    caption_prompt, [image_b64]
                 )
-
-                chunk.description = response["response"].strip()
+                chunk.description = description
                 logger.info(
-                    f"Generated caption for image {i + 1}/{len(image_chunks)}: {chunk.description[:100]}..."
+                    f"Generated caption for image {i + 1}/{len(image_chunks)}: {description[:100]}..."
                 )
 
-                emb_input = f"Image description: {response['response'].strip()}\nImage caption: {chunk.caption}"
-                print(emb_input)
-                embedding = ollama.embed(
-                    model=self.text_embedding_model, input=emb_input
-                )["embeddings"][0]
-                chunk.embedding = np.array(embedding)
+                emb_input = (
+                    f"Image description: {description}\nImage caption: {chunk.caption}"
+                )
+                embedding = self.text_embedding_model.embed(emb_input)
+                chunk.embedding = embedding
 
                 logger.info(
                     f"Generated embedding for image caption {i + 1}/{len(image_chunks)}"
@@ -634,7 +629,8 @@ class PDFProcessor:
 class VectorStore:
     """Simple vector store for similarity search"""
 
-    def __init__(self):
+    def __init__(self, text_embedding_model: ModelProvider):
+        self.text_embedding_model = text_embedding_model
         self.text_chunks: list[TextChunk] = []
         self.image_chunks: list[ImageChunk] = []
         self.text_embeddings: np.ndarray | None = None
@@ -672,18 +668,12 @@ class VectorStore:
         b = b / np.linalg.norm(b, axis=-1, keepdims=True)
         return a @ b.T
 
-    # TODO remove embedding model param
-    def search_text(
-        self, query: str, top_k: int = 5, embedding_model: str = "nomic-embed-text"
-    ) -> list[tuple[TextChunk, float]]:
+    def search_text(self, query: str, top_k: int = 5) -> list[tuple[TextChunk, float]]:
         """Search for similar text chunks"""
         if self.text_embeddings is None or len(self.text_chunks) == 0:
             return []
 
-        query_embedding = np.array(
-            ollama.embed(model=embedding_model, input=query)["embeddings"][0]
-        )
-
+        query_embedding = self.text_embedding_model.embed(query)
         similarities = self.cosine_similarity(
             query_embedding.reshape(1, -1), self.text_embeddings
         )[0]
@@ -699,16 +689,13 @@ class VectorStore:
 
     # TODO remove embedding model param
     def search_images(
-        self, query: str, top_k: int = 5, embedding_model: str = "nomic-embed-text"
+        self, query: str, top_k: int = 5
     ) -> list[tuple[ImageChunk, float]]:
         """Search for similar image chunks based on their descriptions"""
         if self.image_embeddings is None or len(self.image_chunks) == 0:
             return []
 
-        query_embedding = np.array(
-            ollama.embed(model=embedding_model, input=query)["embeddings"][0]
-        )
-
+        query_embedding = self.text_embedding_model.embed(query)
         similarities = self.cosine_similarity(
             query_embedding.reshape(1, -1), self.image_embeddings
         )[0]

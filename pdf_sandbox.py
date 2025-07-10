@@ -7,6 +7,8 @@ from pathlib import Path
 
 from pdf_processor import ChunkingStrategy, ExtractionBackend, PDFProcessor, VectorStore
 
+from models import OllamaModel
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -14,8 +16,10 @@ logger = logging.getLogger(__name__)
 def main():
     """Example usage of the PDF processor"""
 
+    text_embedding_model = OllamaModel("nomic-embed-text")
     processor = PDFProcessor(
-        text_embedding_model="nomic-embed-text",
+        text_embedding_model=text_embedding_model,
+        image_captioning_model=OllamaModel("qwen2.5-vl:3b"),
         extraction_backend=ExtractionBackend.DOCLING,
         chunking_strategy=ChunkingStrategy.DOCUMENT_STRUCTURE,
         chunk_size=500,
@@ -38,7 +42,7 @@ def main():
 
     print("\nSample text chunks:")
     for i, chunk in enumerate(processed_doc.text_chunks[:3]):
-        print(f"Chunk {i+1}:")
+        print(f"Chunk {i + 1}:")
         print(f"  Content: {chunk.content[:100]}...")
         print(f"  Has embedding: {chunk.embedding is not None}")
         if chunk.embedding is not None:
@@ -48,7 +52,7 @@ def main():
     if processed_doc.image_chunks:
         print("\nSample image chunks:")
         for i, chunk in enumerate(processed_doc.image_chunks[:2]):
-            print(f"Image {i+1}:")
+            print(f"Image {i + 1}:")
             print(f"  Format: {chunk.image_format}")
             print(f"  Data size: {len(chunk.image_data)} bytes")
             print(
@@ -60,7 +64,7 @@ def main():
                 print(f"  Embedding shape: {chunk.embedding.shape}")
             print()
 
-    vector_store = VectorStore()
+    vector_store = VectorStore(text_embedding_model)
     vector_store.add_document(processed_doc)
 
     print("\n" + "=" * 50)
@@ -73,7 +77,7 @@ def main():
 
     print("\nTop text results:")
     for i, (chunk, score) in enumerate(text_results):
-        print(f"{i+1}. Score: {score:.3f}")
+        print(f"{i + 1}. Score: {score:.3f}")
         print(f"   Content: {chunk.content[:150]}...")
         print()
 
@@ -83,7 +87,7 @@ def main():
 
     print("\nTop combined results:")
     for i, (chunk, score, chunk_type) in enumerate(combined_results):
-        print(f"{i+1}. Type: {chunk_type}, Score: {score:.3f}")
+        print(f"{i + 1}. Type: {chunk_type}, Score: {score:.3f}")
         if chunk_type == "text":
             print(f"   Content: {chunk.content[:100]}...")
         else:
@@ -112,9 +116,10 @@ def compare_extraction_backends():
     for backend in backends:
         try:
             processor = PDFProcessor(
+                text_embedding_model=OllamaModel("nomic-embed-text"),
+                image_captioning_model=OllamaModel("qwen2.5-vl"),
                 extraction_backend=backend,
                 extract_images=False,  # Skip images for quick comparison
-                text_embedding_model="nomic-embed-text",
             )
 
             text, images = processor.extract_content(pdf_path)
@@ -131,5 +136,5 @@ def compare_extraction_backends():
 
 if __name__ == "__main__":
     main()
-    # print("\n" + "="*50)
-    # compare_extraction_backends()
+    print("\n" + "=" * 50)
+    compare_extraction_backends()
