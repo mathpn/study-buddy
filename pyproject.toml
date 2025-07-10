@@ -8,6 +8,7 @@ dependencies = [
     "docling>=2.39.0",
     "numpy>=2.3.1",
     "ollama>=0.5.1",
+    "openai>=1.93.3",
     "pydantic>=2.11.7",
     "pymupdf4llm>=0.0.26",
 ]

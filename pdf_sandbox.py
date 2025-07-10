@@ -5,9 +5,8 @@ Sandbox script to use the PDF processor module
 import logging
 from pathlib import Path
 
+from models import OllamaModel, OpenAIModel
 from pdf_processor import ChunkingStrategy, ExtractionBackend, PDFProcessor, VectorStore
-
-from models import OllamaModel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
