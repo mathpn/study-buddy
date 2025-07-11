@@ -1,14 +1,19 @@
 import os
 from abc import ABC, abstractmethod
+from typing import Type, TypeVar
 
 import numpy as np
 import ollama
 from openai import OpenAI
+from pydantic import BaseModel
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class ModelProvider(ABC):
     @abstractmethod
     def generate_with_images(self, prompt: str, images_b64: list[str]) -> str: ...
+    def generate_with_schema(self, prompt: str, schema: Type[T]) -> T | None: ...
     def embed(self, input: str) -> np.ndarray: ...
 
 
@@ -16,6 +21,12 @@ class OllamaModel(ModelProvider):
     def __init__(self, model_name: str, host: str = "http://localhost:11434"):
         self.model_name = model_name
         self.client = ollama.Client(host)
+
+    def generate_with_schema(self, prompt: str, schema: Type[T]) -> T | None:
+        response = self.client.generate(
+            model=self.model_name, prompt=prompt, format=schema.model_json_schema()
+        )
+        return schema.model_validate_json(response["response"])
 
     def generate_with_images(self, prompt: str, images_b64: list[str]) -> str:
         response = self.client.generate(
@@ -35,6 +46,14 @@ class OpenAIModel(ModelProvider):
     def __init__(self, model_name: str):
         self.model_name = model_name
         self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+    def generate_with_schema(self, prompt: str, schema: Type[T]) -> T | None:
+        response = self.client.chat.completions.parse(
+            model=self.model_name,
+            messages=[{"role": "user", "content": prompt}],
+            response_format=schema,
+        )
+        return response.choices[0].message.parsed
 
     def generate_with_images(self, prompt: str, images_b64: list[str]) -> str:
         messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
