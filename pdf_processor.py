@@ -214,7 +214,6 @@ class PDFProcessor:
 
     def __init__(
         self,
-        text_embedding_model: ModelProvider,
         image_captioning_model: ModelProvider,
         extraction_backend: ExtractionBackend = ExtractionBackend.DOCLING,
         chunking_strategy: ChunkingStrategy = ChunkingStrategy.DOCUMENT_STRUCTURE,
@@ -226,7 +225,6 @@ class PDFProcessor:
         Initialize PDF processor
 
         Args:
-            text_embedding_model: Model for text embeddings
             image_captioning_model: Model for image captioning. Should be a multimodal model.
             extraction_backend: Backend for PDF extraction
             chunking_strategy: Strategy for text chunking
@@ -234,7 +232,6 @@ class PDFProcessor:
             chunk_overlap: Overlap between chunks
             extract_images: Whether to extract images
         """
-        self.text_embedding_model = text_embedding_model
         self.image_captioning_model = image_captioning_model
         self.extraction_backend = extraction_backend
         self.chunking_strategy = chunking_strategy
@@ -470,34 +467,6 @@ class PDFProcessor:
 
         return chunks
 
-    def generate_text_embeddings(self, chunks: list[TextChunk]) -> list[TextChunk]:
-        """
-        Generate embeddings for text chunks
-
-        Args:
-            chunks: List of TextChunk objects
-
-        Returns:
-            List of TextChunk objects with embeddings
-        """
-        logger.info(f"Generating embeddings for {len(chunks)} text chunks")
-
-        for i, chunk in enumerate(chunks):
-            try:
-                embedding = self.text_embedding_model.embed(chunk.content)
-                chunk.embedding = embedding
-
-                if (i + 1) % 10 == 0:
-                    logger.info(
-                        f"Generated embeddings for {i + 1}/{len(chunks)} chunks"
-                    )
-
-            except Exception as e:
-                logger.error(f"Failed to generate embedding for chunk {i}: {e}")
-                chunk.embedding = None
-
-        return chunks
-
     def caption_images(self, image_chunks: list[ImageChunk]) -> list[ImageChunk]:
         """Generate captions for image chunks"""
         logger.info(f"Generating captions for {len(image_chunks)} image chunks")
@@ -541,7 +510,6 @@ class PDFProcessor:
 
         raw_text, images = self.extract_content(pdf_path)
         text_chunks = self.chunk_text(raw_text)
-        text_chunks = self.generate_text_embeddings(text_chunks)
 
         image_chunks = []
         if self.extract_images and images:
@@ -572,7 +540,6 @@ class PDFProcessor:
                 "chunking_strategy": self.chunking_strategy.value,
                 "num_text_chunks": len(text_chunks),
                 "num_image_chunks": len(image_chunks),
-                "text_embedding_model": self.text_embedding_model,
                 "image_captioning_model": self.image_captioning_model,
             },
         )
