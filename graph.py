@@ -88,11 +88,9 @@ def build_knowledge_graph(chunk: str, model: ModelProvider) -> KnowledgeGraph | 
     ### Relationship Types
     - **defines**: Source defines or explains target
     - **requires**: Source requires or depends on target
-    - **causes**: Source causes or leads to target
     - **implements**: Source implements target
     - **measures**: Source measures target
     - **applies_to**: Source applies to target
-    - **composed_of**: Source is composed of target
     - **contrasts_with**: Source contrasts with target
     - **related_to**: General relationship between source and target
 
