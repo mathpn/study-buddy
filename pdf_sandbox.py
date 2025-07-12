@@ -5,8 +5,16 @@ Sandbox script to use the PDF processor module
 import logging
 from pathlib import Path
 
+from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+
 from models import OllamaModel, OpenAIModel
-from pdf_processor import ChunkingStrategy, ExtractionBackend, PDFProcessor, VectorStore
+from pdf_processor import (
+    ChunkingStrategy,
+    ExtractionBackend,
+    PDFProcessor,
+    TextChunk,
+    VectorStore,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,7 +26,8 @@ def main():
     # text_embedding_model = OpenAIModel("text-embedding-3-small")
     text_embedding_model = OllamaModel("nomic-embed-text")
     processor = PDFProcessor(
-        image_captioning_model=OpenAIModel("gpt-4.1-mini"),
+        # image_captioning_model=OpenAIModel("gpt-4.1-mini"),
+        image_captioning_model=OllamaModel("granite3.2-vision"),
         extraction_backend=ExtractionBackend.DOCLING,
         chunking_strategy=ChunkingStrategy.DOCUMENT_STRUCTURE,
         chunk_size=500,
@@ -57,7 +66,10 @@ def main():
             print(f"  Caption: {chunk.caption[:100] if chunk.caption else 'None'}")
             print()
 
-    vector_store = VectorStore(text_embedding_model)
+    vector_store = VectorStore(
+        OllamaEmbeddingFunction(model_name="nomic-embed-text"),
+        persist_directory="./vector_store",
+    )
     vector_store.add_document(processed_doc)
 
     print("\n" + "=" * 50)
@@ -79,9 +91,10 @@ def main():
     combined_results = vector_store.search_combined(combined_query, top_k=5)
 
     print("\nTop combined results:")
-    for i, (chunk, score, chunk_type) in enumerate(combined_results):
+    for i, (chunk, score) in enumerate(combined_results):
+        chunk_type = "text" if isinstance(chunk, TextChunk) else "image"
         print(f"{i + 1}. Type: {chunk_type}, Score: {score:.3f}")
-        if chunk_type == "text":
+        if isinstance(chunk, TextChunk):
             print(f"   Content: {chunk.content[:100]}...")
         else:
             print(
@@ -109,7 +122,6 @@ def compare_extraction_backends():
     for backend in backends:
         try:
             processor = PDFProcessor(
-                text_embedding_model=OllamaModel("nomic-embed-text"),
                 image_captioning_model=OllamaModel("qwen2.5-vl"),
                 extraction_backend=backend,
                 extract_images=False,  # Skip images for quick comparison

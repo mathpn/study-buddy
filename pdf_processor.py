@@ -14,15 +14,15 @@ This module provides PDF processing capabilities including:
 import base64
 import io
 import logging
+import os
 import re
 import uuid
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import chromadb
-import numpy as np
 import pymupdf4llm
 from chromadb.config import Settings
 from docling.datamodel.base_models import InputFormat
@@ -554,32 +554,17 @@ class VectorStore:
     """Vector store for similarity search using ChromaDB"""
 
     def __init__(
-        self,
-        text_embedding_model: ModelProvider,
-        persist_directory: str | None = None,
+        self, embedding_function: chromadb.EmbeddingFunction, persist_directory: str
     ):
-        self.text_embedding_model = text_embedding_model
-        self.text_chunks: dict[str, TextChunk] = {}
-        self.image_chunks: dict[str, ImageChunk] = {}
+        self.persist_directory = persist_directory
+        self._volatile_image_store: dict[str, bytes] = {}
 
         settings = Settings(anonymized_telemetry=False)
-        if persist_directory:
-            self.client = chromadb.PersistentClient(
-                path=persist_directory, settings=settings
-            )
-        else:
-            self.client = chromadb.EphemeralClient(settings=settings)
-
-        # Create a ChromaDB-compatible embedding function
-        # XXX improve
-        class CustomEmbeddingFunction(chromadb.EmbeddingFunction):
-            def __init__(self, model):
-                self.model = model
-
-            def __call__(self, texts):
-                return [self.model.embed(text).tolist() for text in texts]
-
-        embedding_function = CustomEmbeddingFunction(text_embedding_model)
+        self.client = chromadb.PersistentClient(
+            path=persist_directory, settings=settings
+        )
+        self.image_directory = os.path.join(persist_directory, "images")
+        os.makedirs(self.image_directory, exist_ok=True)
 
         self.collection = self.client.get_or_create_collection(
             name="chunks",
@@ -596,8 +581,6 @@ class VectorStore:
 
         for chunk in processed_doc.text_chunks:
             chunk_id = str(uuid.uuid4())
-            self.text_chunks[chunk_id] = chunk
-
             text_ids.append(chunk_id)
             text_contents.append(chunk.content)
             metadata = asdict(chunk)
@@ -616,13 +599,19 @@ class VectorStore:
 
         for chunk in processed_doc.image_chunks:
             chunk_id = str(uuid.uuid4())
-            self.image_chunks[chunk_id] = chunk
-
             emb_input = f"Image description: {chunk.description}\nImage caption: {chunk.caption}"
             image_ids.append(chunk_id)
             image_contents.append(emb_input)
             metadata = asdict(chunk)
-            metadata.pop("image_data")  # bytes
+            image_data = metadata.pop("image_data")
+
+            image_filename = f"{chunk_id}.{chunk.image_format.lower()}"
+            image_path = os.path.join(self.image_directory, image_filename)
+
+            with open(image_path, "wb") as f:
+                f.write(image_data)
+
+            metadata["image_path"] = image_path
             image_metadatas.append({**metadata, "type": "image"})
 
         if image_ids:
@@ -632,10 +621,10 @@ class VectorStore:
                 metadatas=image_metadatas,
             )
 
-    def _search(self, query: str, where, top_k: int = 5):
+    def _search(self, query: str, where: chromadb.Where | None, top_k: int = 5):
         results = self.collection.query(
             query_texts=[query],
-            n_results=min(top_k, len(self.text_chunks)),
+            n_results=top_k,
             include=["documents", "metadatas", "distances"],
             where=where,
         )
@@ -647,20 +636,52 @@ class VectorStore:
         if not results["ids"] or len(results["ids"]) == 0:
             return []
 
-        if results["distances"] is None:
+        if results["distances"] is None or results["metadatas"] is None:
             return []
 
         out = []
         for i, distance in enumerate(results["distances"][0]):
             metadata = results["metadatas"][0][i]
-            data_type = metadata.pop("type", None)
-            distance = results["distances"][0][i]
-            if data_type == "text":
-                chunk = TextChunk(**metadata, content=results["documents"][0][i])
+            if metadata is None:
+                continue
+
+            metadata_copy = dict(metadata)
+            data_type = metadata_copy.pop("type", None)
+
+            if data_type == "text" and results["documents"] is not None:
+                chunk_index = metadata_copy.get("chunk_index", 0)
+                if not isinstance(chunk_index, int):
+                    chunk_index = int(chunk_index) if chunk_index is not None else 0
+
+                chunk = TextChunk(
+                    content=results["documents"][0][i],
+                    chunk_index=chunk_index,
+                )
                 out.append((chunk, 1.0 - distance))
             elif data_type == "image":
-                chunk = ImageChunk(**metadata)
-                out.append((chunk, 1.0 - distance))
+                image_path = str(metadata_copy.pop("image_path", ""))
+                if image_path and os.path.exists(image_path):
+                    with open(image_path, "rb") as f:
+                        image_data = f.read()
+
+                    image_index = metadata_copy.get("image_index", 0)
+                    if not isinstance(image_index, int):
+                        image_index = int(image_index) if image_index is not None else 0
+
+                    image_format = metadata_copy.get("image_format", "PNG")
+                    if not isinstance(image_format, str):
+                        image_format = (
+                            str(image_format) if image_format is not None else "PNG"
+                        )
+
+                    chunk = ImageChunk(
+                        image_data=image_data,
+                        caption=str(metadata_copy.get("caption", "")),
+                        description=str(metadata_copy.get("description", "")),
+                        image_index=image_index,
+                        image_format=image_format,
+                    )
+                    out.append((chunk, 1.0 - distance))
 
         return out
 
