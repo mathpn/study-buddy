@@ -498,21 +498,9 @@ class PDFProcessor:
 
         return chunks
 
-    def caption_and_embed_images(
-        self, image_chunks: list[ImageChunk]
-    ) -> list[ImageChunk]:
-        """
-        Generate captions and embeddings for image chunks.
-
-        Args:
-            image_chunks: List of ImageChunk objects
-
-        Returns:
-            List of ImageChunk objects with captions and embeddings
-        """
-        logger.info(
-            f"Generating captions and embeddings for {len(image_chunks)} image chunks"
-        )
+    def caption_images(self, image_chunks: list[ImageChunk]) -> list[ImageChunk]:
+        """Generate captions for image chunks"""
+        logger.info(f"Generating captions for {len(image_chunks)} image chunks")
 
         for i, chunk in enumerate(image_chunks):
             try:
@@ -533,20 +521,9 @@ class PDFProcessor:
                     f"Generated caption for image {i + 1}/{len(image_chunks)}: {description[:100]}..."
                 )
 
-                emb_input = (
-                    f"Image description: {description}\nImage caption: {chunk.caption}"
-                )
-                embedding = self.text_embedding_model.embed(emb_input)
-                chunk.embedding = embedding
-
-                logger.info(
-                    f"Generated embedding for image caption {i + 1}/{len(image_chunks)}"
-                )
-
             except Exception as e:
                 logger.error(f"Failed to process image {i}: {e}")
                 chunk.description = None
-                chunk.embedding = None
 
         return image_chunks
 
@@ -584,7 +561,7 @@ class PDFProcessor:
                 )
 
             if image_chunks:
-                image_chunks = self.caption_and_embed_images(image_chunks)
+                image_chunks = self.caption_images(image_chunks)
 
         processed_doc = ProcessedDocument(
             text_chunks=text_chunks,
