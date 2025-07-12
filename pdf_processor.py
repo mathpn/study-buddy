@@ -15,13 +15,16 @@ import base64
 import io
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
+import chromadb
 import numpy as np
 import pymupdf4llm
+from chromadb.config import Settings
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.document import ConversionResult
 from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -551,103 +554,162 @@ class PDFProcessor:
 
 
 class VectorStore:
-    """Simple vector store for similarity search"""
+    """Vector store for similarity search using ChromaDB"""
 
-    def __init__(self, text_embedding_model: ModelProvider):
+    def __init__(
+        self,
+        text_embedding_model: ModelProvider,
+        persist_directory: str | None = None,
+    ):
         self.text_embedding_model = text_embedding_model
-        self.text_chunks: list[TextChunk] = []
-        self.image_chunks: list[ImageChunk] = []
-        self.text_embeddings: np.ndarray | None = None
-        self.image_embeddings: np.ndarray | None = None
+        self.text_chunks: dict[str, TextChunk] = {}
+        self.image_chunks: dict[str, ImageChunk] = {}
+
+        settings = Settings(anonymized_telemetry=False)
+        if persist_directory:
+            self.client = chromadb.PersistentClient(
+                path=persist_directory, settings=settings
+            )
+        else:
+            self.client = chromadb.EphemeralClient(settings=settings)
+
+        # Create a ChromaDB-compatible embedding function
+        # XXX improve
+        class CustomEmbeddingFunction(chromadb.EmbeddingFunction):
+            def __init__(self, model):
+                self.model = model
+
+            def __call__(self, texts):
+                return [self.model.embed(text).tolist() for text in texts]
+
+        embedding_function = CustomEmbeddingFunction(text_embedding_model)
+
+        self.collection = self.client.get_or_create_collection(
+            name="chunks",
+            embedding_function=embedding_function,
+            configuration={"hnsw": {"space": "cosine"}},
+        )
 
     def add_document(self, processed_doc: ProcessedDocument):
         """Add a processed document to the vector store"""
-        self.text_chunks.extend(processed_doc.text_chunks)
-        self.image_chunks.extend(processed_doc.image_chunks)
+        # Add text chunks
+        text_ids = []
+        text_contents = []
+        text_metadatas = []
 
-        # Rebuild embedding matrices
-        self._rebuild_embeddings()
+        for chunk in processed_doc.text_chunks:
+            chunk_id = str(uuid.uuid4())
+            self.text_chunks[chunk_id] = chunk
 
-    def _rebuild_embeddings(self):
-        """Rebuild embedding matrices from chunks"""
-        text_embeddings = []
-        for chunk in self.text_chunks:
-            if chunk.embedding is not None:
-                text_embeddings.append(chunk.embedding)
+            text_ids.append(chunk_id)
+            text_contents.append(chunk.content)
+            text_metadatas.append(
+                {
+                    "page_number": str(chunk.page_number)
+                    if chunk.page_number is not None
+                    else "",
+                    "chunk_index": str(chunk.chunk_index),
+                    "type": "text",
+                }
+            )
 
-        if text_embeddings:
-            self.text_embeddings = np.vstack(text_embeddings)
+        if text_ids:
+            self.collection.add(
+                ids=text_ids, documents=text_contents, metadatas=text_metadatas
+            )
 
-        image_embeddings = []
-        for chunk in self.image_chunks:
-            if chunk.embedding is not None:
-                image_embeddings.append(chunk.embedding)
+        # Add image chunks
+        image_ids = []
+        image_contents = []
+        image_metadatas = []
 
-        if image_embeddings:
-            self.image_embeddings = np.vstack(image_embeddings)
+        for chunk in processed_doc.image_chunks:
+            chunk_id = str(uuid.uuid4())
+            self.image_chunks[chunk_id] = chunk
 
-    def cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> np.ndarray:
-        """Calculate cosine similarity between vectors"""
-        a = a / np.linalg.norm(a, axis=-1, keepdims=True)
-        b = b / np.linalg.norm(b, axis=-1, keepdims=True)
-        return a @ b.T
+            emb_input = f"Image description: {chunk.description}\nImage caption: {chunk.caption}"
+            image_ids.append(chunk_id)
+            image_contents.append(emb_input)
+            image_metadatas.append(
+                {
+                    "caption": chunk.caption,
+                    "page_number": str(chunk.page_number)
+                    if chunk.page_number is not None
+                    else "",
+                    "image_index": str(chunk.image_index),
+                    "image_format": chunk.image_format,
+                    "type": "image",
+                }
+            )
+
+        if image_ids:
+            self.collection.add(
+                ids=image_ids, documents=image_contents, metadatas=image_metadatas
+            )
+
+    def _search(self, query: str, where, top_k: int = 5):
+        results = self.collection.query(
+            query_texts=[query],
+            n_results=min(top_k, len(self.text_chunks)),
+            include=["documents", "metadatas", "distances"],
+            where=where,
+        )
+        return results
 
     def search_text(self, query: str, top_k: int = 5) -> list[tuple[TextChunk, float]]:
         """Search for similar text chunks"""
-        if self.text_embeddings is None or len(self.text_chunks) == 0:
+        if len(self.text_chunks) == 0:
             return []
 
-        query_embedding = self.text_embedding_model.embed(query)
-        similarities = self.cosine_similarity(
-            query_embedding.reshape(1, -1), self.text_embeddings
-        )[0]
+        results = self._search(query, {"type": "text"}, top_k)
+        if not results["ids"] or len(results["ids"]) == 0:
+            return []
 
-        top_indices = np.argsort(-similarities)[:top_k]
-        results = []
+        return [
+            (self.text_chunks[chunk_id], 1.0 - distance)
+            for chunk_id, distance in zip(results["ids"][0], results["distances"][0])
+        ]
 
-        for idx in top_indices:
-            if idx < len(self.text_chunks):
-                results.append((self.text_chunks[idx], similarities[idx]))
-
-        return results
-
-    # TODO remove embedding model param
     def search_images(
         self, query: str, top_k: int = 5
     ) -> list[tuple[ImageChunk, float]]:
         """Search for similar image chunks based on their descriptions"""
-        if self.image_embeddings is None or len(self.image_chunks) == 0:
+        if len(self.image_chunks) == 0:
             return []
 
-        query_embedding = self.text_embedding_model.embed(query)
-        similarities = self.cosine_similarity(
-            query_embedding.reshape(1, -1), self.image_embeddings
-        )[0]
+        results = self._search(query, {"type": "image"}, top_k)
+        if not results["ids"] or len(results["ids"]) == 0:
+            return []
 
-        top_indices = np.argsort(-similarities)[:top_k]
-        results = []
-
-        for idx in top_indices:
-            if idx < len(self.image_chunks):
-                results.append((self.image_chunks[idx], similarities[idx]))
-
-        return results
+        return [
+            (self.image_chunks[chunk_id], 1.0 - distance)
+            for chunk_id, distance in zip(results["ids"][0], results["distances"][0])
+        ]
 
     def search_combined(
         self, query: str, top_k: int = 5
-    ) -> list[tuple[TextChunk | ImageChunk, float, str]]:
+    ) -> Sequence[tuple[TextChunk | ImageChunk, float, str]]:
         """Search both text and images, ranking them together"""
-        search_k = top_k * 2
-        text_results = self.search_text(query, search_k)
-        image_results = self.search_images(query, search_k)
+        if len(self.text_chunks) == 0 and len(self.image_chunks) == 0:
+            return []
 
-        combined_results = []
+        results = self._search(query, None, top_k)
+        if not results["ids"] or len(results["ids"]) == 0:
+            return []
 
-        for chunk, score in text_results:
-            combined_results.append((chunk, score, "text"))
+        out = []
+        for chunk_id, distance, metadata in zip(
+            results["ids"][0], results["distances"][0], results["metadatas"][0]
+        ):
+            if metadata["type"] == "text":
+                out.append(
+                    (self.text_chunks[chunk_id], 1.0 - distance, metadata["type"])
+                )
+            elif metadata["type"] == "image":
+                out.append(
+                    (self.image_chunks[chunk_id], 1.0 - distance, metadata["type"])
+                )
+            else:
+                raise NotImplementedError("unsupported data type")
 
-        for chunk, score in image_results:
-            combined_results.append((chunk, score, "image"))
-
-        combined_results.sort(key=lambda x: x[1], reverse=True)
-        return combined_results[:top_k]
+        return out

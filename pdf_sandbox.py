@@ -15,10 +15,10 @@ logger = logging.getLogger(__name__)
 def main():
     """Example usage of the PDF processor"""
 
+    # text_embedding_model = OpenAIModel("text-embedding-3-small")
     text_embedding_model = OllamaModel("nomic-embed-text")
     processor = PDFProcessor(
-        text_embedding_model=text_embedding_model,
-        image_captioning_model=OllamaModel("qwen2.5-vl:3b"),
+        image_captioning_model=OpenAIModel("gpt-4.1-mini"),
         extraction_backend=ExtractionBackend.DOCLING,
         chunking_strategy=ChunkingStrategy.DOCUMENT_STRUCTURE,
         chunk_size=500,
@@ -43,9 +43,6 @@ def main():
     for i, chunk in enumerate(processed_doc.text_chunks[:3]):
         print(f"Chunk {i + 1}:")
         print(f"  Content: {chunk.content[:100]}...")
-        print(f"  Has embedding: {chunk.embedding is not None}")
-        if chunk.embedding is not None:
-            print(f"  Embedding shape: {chunk.embedding.shape}")
         print()
 
     if processed_doc.image_chunks:
@@ -58,9 +55,6 @@ def main():
                 f"  Description: {chunk.description[:100] if chunk.description else 'None'}..."
             )
             print(f"  Caption: {chunk.caption[:100] if chunk.caption else 'None'}")
-            print(f"  Has embedding: {chunk.embedding is not None}")
-            if chunk.embedding is not None:
-                print(f"  Embedding shape: {chunk.embedding.shape}")
             print()
 
     vector_store = VectorStore(text_embedding_model)
@@ -135,5 +129,5 @@ def compare_extraction_backends():
 
 if __name__ == "__main__":
     main()
-    print("\n" + "=" * 50)
-    compare_extraction_backends()
+    # print("\n" + "=" * 50)
+    # compare_extraction_backends()
