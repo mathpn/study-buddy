@@ -55,9 +55,6 @@ class TextChunk:
     content: str
     page_number: int | None = None
     chunk_index: int = 0
-    start_char: int | None = None
-    end_char: int | None = None
-    embedding: np.ndarray | None = None
 
 
 @dataclass
@@ -70,7 +67,6 @@ class ImageChunk:
     page_number: int | None = None
     image_index: int = 0
     image_format: str = "PNG"
-    embedding: np.ndarray | None = None
 
 
 @dataclass
@@ -317,8 +313,6 @@ class PDFProcessor:
                     TextChunk(
                         content=section["content"].strip(),
                         chunk_index=len(chunks),
-                        start_char=None,
-                        end_char=None,
                     )
                 )
             else:
@@ -378,8 +372,6 @@ class PDFProcessor:
                                 TextChunk(
                                     content=current_chunk.strip(),
                                     chunk_index=len(chunks),
-                                    start_char=None,
-                                    end_char=None,
                                 )
                             )
                         current_chunk = ""
@@ -390,8 +382,6 @@ class PDFProcessor:
                     TextChunk(
                         content=current_chunk.strip(),
                         chunk_index=len(chunks),
-                        start_char=None,
-                        end_char=None,
                     )
                 )
         else:
@@ -408,8 +398,6 @@ class PDFProcessor:
                             TextChunk(
                                 content=current_chunk.strip(),
                                 chunk_index=len(chunks),
-                                start_char=None,
-                                end_char=None,
                             )
                         )
                         current_chunk = ""
@@ -429,8 +417,6 @@ class PDFProcessor:
                                 TextChunk(
                                     content=current_chunk.strip(),
                                     chunk_index=len(chunks),
-                                    start_char=None,
-                                    end_char=None,
                                 )
                             )
                             current_chunk = sentence
@@ -449,8 +435,6 @@ class PDFProcessor:
                             TextChunk(
                                 content=current_chunk.strip(),
                                 chunk_index=len(chunks),
-                                start_char=None,
-                                end_char=None,
                             )
                         )
                         current_chunk = paragraph
@@ -463,8 +447,6 @@ class PDFProcessor:
                     TextChunk(
                         content=current_chunk.strip(),
                         chunk_index=len(chunks),
-                        start_char=None,
-                        end_char=None,
                     )
                 )
 
@@ -483,8 +465,6 @@ class PDFProcessor:
                 TextChunk(
                     content=chunk_text,
                     chunk_index=len(chunks),
-                    start_char=None,
-                    end_char=None,
                 )
             )
 
