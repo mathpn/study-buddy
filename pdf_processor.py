@@ -16,7 +16,7 @@ import io
 import logging
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Sequence
@@ -56,7 +56,6 @@ class TextChunk:
     """Container for a text chunk with metadata"""
 
     content: str
-    page_number: int | None = None
     chunk_index: int = 0
 
 
@@ -66,8 +65,7 @@ class ImageChunk:
 
     image_data: bytes
     caption: str
-    description: str | None = None
-    page_number: int | None = None
+    description: str = ""
     image_index: int = 0
     image_format: str = "PNG"
 
@@ -525,7 +523,6 @@ class PDFProcessor:
                     ImageChunk(
                         image_data=img_bytes,
                         caption=img_element.caption,
-                        page_number=img_element.page_number,
                         image_index=i,
                         image_format="PNG",
                     )
@@ -603,15 +600,9 @@ class VectorStore:
 
             text_ids.append(chunk_id)
             text_contents.append(chunk.content)
-            text_metadatas.append(
-                {
-                    "page_number": str(chunk.page_number)
-                    if chunk.page_number is not None
-                    else "",
-                    "chunk_index": str(chunk.chunk_index),
-                    "type": "text",
-                }
-            )
+            metadata = asdict(chunk)
+            metadata.pop("content")
+            text_metadatas.append({**metadata, "type": "text"})
 
         if text_ids:
             self.collection.add(
@@ -630,21 +621,15 @@ class VectorStore:
             emb_input = f"Image description: {chunk.description}\nImage caption: {chunk.caption}"
             image_ids.append(chunk_id)
             image_contents.append(emb_input)
-            image_metadatas.append(
-                {
-                    "caption": chunk.caption,
-                    "page_number": str(chunk.page_number)
-                    if chunk.page_number is not None
-                    else "",
-                    "image_index": str(chunk.image_index),
-                    "image_format": chunk.image_format,
-                    "type": "image",
-                }
-            )
+            metadata = asdict(chunk)
+            metadata.pop("image_data")  # bytes
+            image_metadatas.append({**metadata, "type": "image"})
 
         if image_ids:
             self.collection.add(
-                ids=image_ids, documents=image_contents, metadatas=image_metadatas
+                ids=image_ids,
+                documents=image_contents,
+                metadatas=image_metadatas,
             )
 
     def _search(self, query: str, where, top_k: int = 5):
@@ -656,60 +641,40 @@ class VectorStore:
         )
         return results
 
-    def search_text(self, query: str, top_k: int = 5) -> list[tuple[TextChunk, float]]:
-        """Search for similar text chunks"""
-        if len(self.text_chunks) == 0:
-            return []
-
-        results = self._search(query, {"type": "text"}, top_k)
+    def _retrieve_chunks(
+        self, results: chromadb.QueryResult
+    ) -> list[tuple[TextChunk | ImageChunk, float]]:
         if not results["ids"] or len(results["ids"]) == 0:
             return []
 
-        return [
-            (self.text_chunks[chunk_id], 1.0 - distance)
-            for chunk_id, distance in zip(results["ids"][0], results["distances"][0])
-        ]
-
-    def search_images(
-        self, query: str, top_k: int = 5
-    ) -> list[tuple[ImageChunk, float]]:
-        """Search for similar image chunks based on their descriptions"""
-        if len(self.image_chunks) == 0:
-            return []
-
-        results = self._search(query, {"type": "image"}, top_k)
-        if not results["ids"] or len(results["ids"]) == 0:
-            return []
-
-        return [
-            (self.image_chunks[chunk_id], 1.0 - distance)
-            for chunk_id, distance in zip(results["ids"][0], results["distances"][0])
-        ]
-
-    def search_combined(
-        self, query: str, top_k: int = 5
-    ) -> Sequence[tuple[TextChunk | ImageChunk, float, str]]:
-        """Search both text and images, ranking them together"""
-        if len(self.text_chunks) == 0 and len(self.image_chunks) == 0:
-            return []
-
-        results = self._search(query, None, top_k)
-        if not results["ids"] or len(results["ids"]) == 0:
+        if results["distances"] is None:
             return []
 
         out = []
-        for chunk_id, distance, metadata in zip(
-            results["ids"][0], results["distances"][0], results["metadatas"][0]
-        ):
-            if metadata["type"] == "text":
-                out.append(
-                    (self.text_chunks[chunk_id], 1.0 - distance, metadata["type"])
-                )
-            elif metadata["type"] == "image":
-                out.append(
-                    (self.image_chunks[chunk_id], 1.0 - distance, metadata["type"])
-                )
-            else:
-                raise NotImplementedError("unsupported data type")
+        for i, distance in enumerate(results["distances"][0]):
+            metadata = results["metadatas"][0][i]
+            data_type = metadata.pop("type", None)
+            distance = results["distances"][0][i]
+            if data_type == "text":
+                chunk = TextChunk(**metadata, content=results["documents"][0][i])
+                out.append((chunk, 1.0 - distance))
+            elif data_type == "image":
+                chunk = ImageChunk(**metadata)
+                out.append((chunk, 1.0 - distance))
 
         return out
+
+    def search_text(self, query: str, top_k: int = 5):
+        """Search for similar text chunks"""
+        results = self._search(query, {"type": "text"}, top_k)
+        return self._retrieve_chunks(results)
+
+    def search_image(self, query: str, top_k: int = 5):
+        """Search for similar image chunks"""
+        results = self._search(query, {"type": "image"}, top_k)
+        return self._retrieve_chunks(results)
+
+    def search_combined(self, query: str, top_k: int = 5):
+        """Search both text and images, ranking them together"""
+        results = self._search(query, None, top_k)
+        return self._retrieve_chunks(results)
