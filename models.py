@@ -2,7 +2,6 @@ import os
 from abc import ABC, abstractmethod
 from typing import Type, TypeVar
 
-import numpy as np
 import ollama
 from openai import OpenAI
 from pydantic import BaseModel
@@ -14,7 +13,6 @@ class ModelProvider(ABC):
     @abstractmethod
     def generate_with_images(self, prompt: str, images_b64: list[str]) -> str: ...
     def generate_with_schema(self, prompt: str, schema: Type[T]) -> T | None: ...
-    def embed(self, input: str) -> np.ndarray: ...
 
 
 class OllamaModel(ModelProvider):
@@ -35,11 +33,6 @@ class OllamaModel(ModelProvider):
             images=images_b64,
         )
         return response["response"].strip()
-
-    def embed(self, input: str) -> np.ndarray:
-        return np.array(
-            self.client.embed(model=self.model_name, input=input)["embeddings"][0]
-        )
 
 
 class OpenAIModel(ModelProvider):
@@ -71,8 +64,3 @@ class OpenAIModel(ModelProvider):
         )
 
         return response.choices[0].message.content.strip()
-
-    # TODO multiple inputs in one request
-    def embed(self, input: str) -> np.ndarray:
-        response = self.client.embeddings.create(model=self.model_name, input=input)
-        return np.array(response.data[0].embedding)
