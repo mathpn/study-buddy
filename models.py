@@ -20,6 +20,15 @@ class OllamaModel(ModelProvider):
         self.model_name = model_name
         self.client = ollama.Client(host)
 
+    def generate(self, prompt: str) -> str:
+        response = self.client.generate(model=self.model_name, prompt=prompt)
+        return response["response"].strip()
+
+    def chat(self, messages: list[dict[str, str]]) -> str:
+        """Handles chat with conversation history."""
+        response = self.client.chat(model=self.model_name, messages=messages)
+        return response["message"]["content"].strip()
+
     def generate_with_schema(self, prompt: str, schema: Type[T]) -> T | None:
         response = self.client.generate(
             model=self.model_name, prompt=prompt, format=schema.model_json_schema()
