@@ -1,8 +1,10 @@
 import logging
 from pathlib import Path
+from typing import Set
 
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
+from graph import KnowledgeGraph, build_knowledge_graph
 from models import OllamaModel
 from pdf_processor import (
     ChunkingStrategy,
@@ -58,10 +60,104 @@ def _build_enhanced_query(
     return current_query
 
 
+def merge_knowledge_graphs(
+    main_graph: KnowledgeGraph, new_graph: KnowledgeGraph
+) -> None:
+    """
+    Merge a new knowledge graph into the main cumulative graph.
+    Avoids duplicate nodes (by id) and relationships.
+
+    Args:
+        main_graph: The cumulative session graph to merge into
+        new_graph: The new graph fragment to merge
+    """
+    existing_node_ids = {node.id for node in main_graph.nodes}
+    existing_relationships = {
+        (rel.source, rel.target, rel.relationship) for rel in main_graph.relationships
+    }
+
+    for node in new_graph.nodes:
+        if node.id not in existing_node_ids:
+            main_graph.nodes.append(node)
+            existing_node_ids.add(node.id)
+
+    for relationship in new_graph.relationships:
+        rel_key = (
+            relationship.source,
+            relationship.target,
+            relationship.relationship,
+        )
+        if rel_key not in existing_relationships:
+            main_graph.relationships.append(relationship)
+            existing_relationships.add(rel_key)
+
+
+def display_knowledge_graph(graph: KnowledgeGraph) -> None:
+    """
+    Print a simple text representation of the knowledge graph.
+
+    Args:
+        graph: The knowledge graph to display
+    """
+    if not graph.nodes:
+        print("\n--- Knowledge Graph ---")
+        print("No relevant concepts found yet.")
+        return
+
+    print("\n--- Knowledge Graph ---")
+    print(
+        f"Concepts ({len(graph.nodes)} nodes, {len(graph.relationships)} relationships):"
+    )
+
+    # Display nodes grouped by type
+    node_types = {}
+    for node in graph.nodes:
+        if node.type not in node_types:
+            node_types[node.type] = []
+        node_types[node.type].append(node)
+
+    for node_type, nodes in node_types.items():
+        print(f"\n{node_type.upper()}S:")
+        for node in nodes:
+            print(f"  • {node.label}: {node.description}")
+
+    # Display relationships
+    if graph.relationships:
+        print("\nRELATIONSHIPS:")
+        for rel in graph.relationships:
+            # Find the actual node labels for better readability
+            source_label = next(
+                (n.label for n in graph.nodes if n.id == rel.source), rel.source
+            )
+            target_label = next(
+                (n.label for n in graph.nodes if n.id == rel.target), rel.target
+            )
+            print(f"  • {source_label} --[{rel.relationship}]--> {target_label}")
+            if rel.description:
+                print(f"    ({rel.description})")
+
+    print("--- End Knowledge Graph ---\n")
+
+
+def generate_chunk_id(chunk) -> str:
+    """
+    Generate a unique identifier for a chunk.
+    This is a simple hash based on content.
+    """
+    if isinstance(chunk, TextChunk):
+        content = chunk.content
+    elif isinstance(chunk, ImageChunk):
+        content = chunk.caption
+    else:
+        content = str(chunk)
+
+    return str(hash(content))
+
+
 def chat(vector_store: VectorStore, model: OllamaModel):
     """
-    Handles the interactive RAG chat interface, maintaining conversation history.
-    Retrieved chunks are placed in system messages and not persisted in history.
+    Handles the interactive RAG chat interface, maintaining conversation history
+    and a cumulative knowledge graph.
 
     Args:
         vector_store: An instance of VectorStore to retrieve context from.
@@ -79,6 +175,9 @@ def chat(vector_store: VectorStore, model: OllamaModel):
 
     conversation_history = []
 
+    session_graph = KnowledgeGraph(nodes=[], relationships=[])
+    processed_chunks: Set[str] = set()
+
     while True:
         try:
             query = input("\nYou: ")
@@ -87,6 +186,36 @@ def chat(vector_store: VectorStore, model: OllamaModel):
 
             enhanced_query = _build_enhanced_query(query, conversation_history)
             retrieved_chunks = vector_store.search_combined(enhanced_query, top_k=3)
+
+            new_chunks_content = []
+            for chunk, _ in retrieved_chunks:
+                chunk_id = generate_chunk_id(chunk)
+
+                if chunk_id not in processed_chunks:
+                    if isinstance(chunk, TextChunk):
+                        chunk_content = chunk.content
+                    elif isinstance(chunk, ImageChunk):
+                        chunk_content = f"Image Caption: {chunk.caption}"
+                    else:
+                        chunk_content = str(chunk)
+
+                    new_chunks_content.append(chunk_content)
+                    processed_chunks.add(chunk_id)
+
+            if new_chunks_content:
+                combined_new_content = "\n\n---\n\n".join(new_chunks_content)
+
+                try:
+                    new_graph = build_knowledge_graph(combined_new_content, model)
+                    if new_graph:
+                        merge_knowledge_graphs(session_graph, new_graph)
+                        logger.info(
+                            f"Added {len(new_graph.nodes)} new nodes and {len(new_graph.relationships)} new relationships to session graph"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to generate knowledge graph: {e}")
+
+            display_knowledge_graph(session_graph)
 
             messages = []
 
@@ -117,7 +246,7 @@ def chat(vector_store: VectorStore, model: OllamaModel):
 
             print(f"\nAssistant: {response_content}")
 
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             print("\nExiting chat.")
             break
 
