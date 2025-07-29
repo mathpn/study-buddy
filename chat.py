@@ -5,7 +5,7 @@ from typing import Set
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
 from graph import KnowledgeGraph, build_knowledge_graph
-from models import OllamaModel, ModelProvider, OpenAIModel
+from models import ModelProvider, OllamaModel, OpenAIModel
 from pdf_processor import (
     ChunkingStrategy,
     ExtractionBackend,
@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def _build_enhanced_query(
+def build_enhanced_query(
     current_query: str, conversation_history: list, max_history_tokens: int = 100
 ) -> str:
     """
@@ -184,7 +184,7 @@ def chat(vector_store: VectorStore, model: ModelProvider):
             if not query.strip():
                 continue
 
-            enhanced_query = _build_enhanced_query(query, conversation_history)
+            enhanced_query = build_enhanced_query(query, conversation_history)
             retrieved_chunks = vector_store.search_combined(enhanced_query, top_k=3)
 
             new_chunks_content = []

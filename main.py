@@ -70,7 +70,7 @@ for i, chunk in enumerate(l.strip() for l in doc.split("\n") if l.strip()):
     emb = extract_embedding(chunk)
     chunks.append(chunk)
     vectors.append(np.array(emb))
-    print(f"Added chunk {i+1} to vectors")
+    print(f"Added chunk {i + 1} to vectors")
 
 vectors = np.concatenate(vectors)
 vectors.shape
