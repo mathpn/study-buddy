@@ -11,7 +11,15 @@ T = TypeVar("T", bound=BaseModel)
 
 class ModelProvider(ABC):
     @abstractmethod
+    def generate(self, prompt: str) -> str: ...
+
+    @abstractmethod
+    def chat(self, messages: list[dict[str, str]]) -> str: ...
+
+    @abstractmethod
     def generate_with_images(self, prompt: str, images_b64: list[str]) -> str: ...
+
+    @abstractmethod
     def generate_with_schema(self, prompt: str, schema: Type[T]) -> T | None: ...
 
 
@@ -48,6 +56,19 @@ class OpenAIModel(ModelProvider):
     def __init__(self, model_name: str):
         self.model_name = model_name
         self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+    def generate(self, prompt: str) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model_name, messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content.strip()
+
+    def chat(self, messages: list[dict[str, str]]) -> str:
+        """Handles chat with conversation history."""
+        response = self.client.chat.completions.create(
+            model=self.model_name, messages=messages
+        )
+        return response.choices[0].message.content.strip()
 
     def generate_with_schema(self, prompt: str, schema: Type[T]) -> T | None:
         response = self.client.chat.completions.parse(

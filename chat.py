@@ -5,7 +5,7 @@ from typing import Set
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
 from graph import KnowledgeGraph, build_knowledge_graph
-from models import OllamaModel
+from models import OllamaModel, ModelProvider, OpenAIModel
 from pdf_processor import (
     ChunkingStrategy,
     ExtractionBackend,
@@ -154,7 +154,7 @@ def generate_chunk_id(chunk) -> str:
     return str(hash(content))
 
 
-def chat(vector_store: VectorStore, model: OllamaModel):
+def chat(vector_store: VectorStore, model: ModelProvider):
     """
     Handles the interactive RAG chat interface, maintaining conversation history
     and a cumulative knowledge graph.

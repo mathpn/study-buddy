@@ -5,7 +5,10 @@ Sandbox script to use the PDF processor module
 import logging
 from pathlib import Path
 
-from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+from chromadb.utils.embedding_functions import (
+    OllamaEmbeddingFunction,
+    OpenAIEmbeddingFunction,
+)
 
 from models import OllamaModel, OpenAIModel
 from pdf_processor import (
@@ -23,8 +26,6 @@ logger = logging.getLogger(__name__)
 def main():
     """Example usage of the PDF processor"""
 
-    # text_embedding_model = OpenAIModel("text-embedding-3-small")
-    text_embedding_model = OllamaModel("nomic-embed-text")
     processor = PDFProcessor(
         # image_captioning_model=OpenAIModel("gpt-4.1-mini"),
         image_captioning_model=OllamaModel("granite3.2-vision"),
