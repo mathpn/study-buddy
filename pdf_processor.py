@@ -12,6 +12,7 @@ This module provides PDF processing capabilities including:
 """
 
 import base64
+import hashlib
 import io
 import logging
 import os
@@ -87,6 +88,7 @@ class ProcessedDocument:
     image_chunks: list[ImageChunk]
     raw_text: str
     metadata: dict[str, Any]
+    document_hash: str
 
 
 def _extract_docling(pdf_path) -> tuple[str, list[ImageElement]]:
@@ -509,6 +511,12 @@ class PDFProcessor:
         """
         logger.info(f"Processing PDF: {pdf_path}")
 
+        hash_obj = hashlib.sha256()
+        with open(pdf_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                hash_obj.update(chunk)
+        document_hash = hash_obj.hexdigest()[:16]
+
         raw_text, images = self.extract_content(pdf_path)
         text_chunks = self.chunk_text(raw_text)
 
@@ -542,6 +550,7 @@ class PDFProcessor:
                 "num_image_chunks": len(image_chunks),
                 "image_captioning_model": self.image_captioning_model,
             },
+            document_hash=document_hash,
         )
 
         logger.info(
