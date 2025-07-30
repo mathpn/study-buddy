@@ -26,6 +26,7 @@ from typing import Any
 import chromadb
 import pymupdf4llm
 from chromadb.config import Settings
+from chromadb.errors import NotFoundError
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.document import ConversionResult
 from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -567,6 +568,7 @@ class VectorStore:
     ):
         self.persist_directory = persist_directory
         self._volatile_image_store: dict[str, bytes] = {}
+        self.embedding_function = embedding_function
 
         settings = Settings(anonymized_telemetry=False)
         self.client = chromadb.PersistentClient(
@@ -575,14 +577,39 @@ class VectorStore:
         self.image_directory = os.path.join(persist_directory, "images")
         os.makedirs(self.image_directory, exist_ok=True)
 
-        self.collection = self.client.get_or_create_collection(
-            name="chunks",
-            embedding_function=embedding_function,
-            configuration={"hnsw": {"space": "cosine"}},
-        )
+        self._collections: dict[str, chromadb.Collection] = {}
 
-    def add_document(self, processed_doc: ProcessedDocument):
+    def _get_collection(self, document_hash: str) -> chromadb.Collection:
+        """Get or create collection for a specific document"""
+        if document_hash not in self._collections:
+            collection_name = f"doc_{document_hash}"
+            self._collections[document_hash] = self.client.get_or_create_collection(
+                name=collection_name,
+                embedding_function=self.embedding_function,
+                configuration={"hnsw": {"space": "cosine"}},
+            )
+        return self._collections[document_hash]
+
+    def document_exists(self, document_hash: str) -> bool:
+        """Check if a document with the given hash already exists"""
+        try:
+            collection_name = f"doc_{document_hash}"
+            collection = self.client.get_collection(name=collection_name)
+            count = collection.count()
+            return count > 0
+        except NotFoundError:
+            return False
+
+    def add_document(self, processed_doc: ProcessedDocument) -> None:
         """Add a processed document to the vector store"""
+        if self.document_exists(processed_doc.document_hash):
+            logger.info(
+                f"Document with hash {processed_doc.document_hash} already exists, skipping..."
+            )
+            return
+
+        collection = self._get_collection(processed_doc.document_hash)
+
         # Add text chunks
         text_ids = []
         text_contents = []
@@ -594,10 +621,16 @@ class VectorStore:
             text_contents.append(chunk.content)
             metadata = asdict(chunk)
             metadata.pop("content")
-            text_metadatas.append({**metadata, "type": "text"})
+            text_metadatas.append(
+                {
+                    **metadata,
+                    "type": "text",
+                    "document_hash": processed_doc.document_hash,
+                }
+            )
 
         if text_ids:
-            self.collection.add(
+            collection.add(
                 ids=text_ids, documents=text_contents, metadatas=text_metadatas
             )
 
@@ -621,23 +654,58 @@ class VectorStore:
                 f.write(image_data)
 
             metadata["image_path"] = image_path
-            image_metadatas.append({**metadata, "type": "image"})
+            image_metadatas.append(
+                {
+                    **metadata,
+                    "type": "image",
+                    "document_hash": processed_doc.document_hash,
+                }
+            )
 
         if image_ids:
-            self.collection.add(
+            collection.add(
                 ids=image_ids,
                 documents=image_contents,
                 metadatas=image_metadatas,
             )
 
-    def _search(self, query: str, where: chromadb.Where | None, top_k: int = 5):
-        results = self.collection.query(
+    def _search_collection(
+        self,
+        collection: chromadb.Collection,
+        query: str,
+        where: chromadb.Where | None,
+        top_k: int = 5,
+    ):
+        results = collection.query(
             query_texts=[query],
             n_results=top_k,
             include=["documents", "metadatas", "distances"],
             where=where,
         )
         return results
+
+    def search_document(
+        self,
+        document_hash: str,
+        query: str,
+        where: chromadb.Where | None = None,
+        top_k: int = 5,
+    ) -> chromadb.QueryResult:
+        """Search within a specific document"""
+        if not self.document_exists(document_hash):
+            return {
+                "ids": [[]],
+                "documents": [[]],
+                "metadatas": [[]],
+                "distances": [[]],
+                "embeddings": None,
+                "uris": None,
+                "data": None,
+                "included": ["documents", "metadatas", "distances"],
+            }
+
+        collection = self._get_collection(document_hash)
+        return self._search_collection(collection, query, where, top_k)
 
     def _retrieve_chunks(
         self, results: chromadb.QueryResult
@@ -694,17 +762,27 @@ class VectorStore:
 
         return out
 
-    def search_text(self, query: str, top_k: int = 5):
+    def search_text(self, query: str, document_hash: str, top_k: int = 5):
         """Search for similar text chunks"""
-        results = self._search(query, {"type": "text"}, top_k)
+        results = self.search_document(document_hash, query, {"type": "text"}, top_k)
         return self._retrieve_chunks(results)
 
-    def search_image(self, query: str, top_k: int = 5):
+    def search_image(self, query: str, document_hash: str, top_k: int = 5):
         """Search for similar image chunks"""
-        results = self._search(query, {"type": "image"}, top_k)
+        results = self.search_document(document_hash, query, {"type": "image"}, top_k)
         return self._retrieve_chunks(results)
 
-    def search_combined(self, query: str, top_k: int = 5):
+    def search_combined(self, query: str, document_hash: str, top_k: int = 5):
         """Search both text and images, ranking them together"""
-        results = self._search(query, None, top_k)
+        results = self.search_document(document_hash, query, None, top_k)
         return self._retrieve_chunks(results)
+
+    def list_documents(self) -> list[str]:
+        """List all document hashes stored in the vector store"""
+        collections = self.client.list_collections()
+        document_hashes = []
+        for collection_info in collections:
+            if collection_info.name.startswith("doc_"):
+                document_hash = collection_info.name[4:]
+                document_hashes.append(document_hash)
+        return document_hashes

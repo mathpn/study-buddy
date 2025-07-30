@@ -1,13 +1,19 @@
 import logging
-import streamlit as st
-import tempfile
 import os
-import plotly.graph_objects as go
+import tempfile
+
 import networkx as nx
+import plotly.graph_objects as go
+import streamlit as st
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
+from chat import (
+    build_enhanced_query,
+    generate_chunk_id,
+    merge_knowledge_graphs,
+)
 from graph import KnowledgeGraph, build_knowledge_graph
-from models import OllamaModel, ModelProvider, OpenAIModel
+from models import ModelProvider, OllamaModel, OpenAIModel
 from pdf_processor import (
     ChunkingStrategy,
     ExtractionBackend,
@@ -15,11 +21,6 @@ from pdf_processor import (
     PDFProcessor,
     TextChunk,
     VectorStore,
-)
-from chat import (
-    build_enhanced_query,
-    merge_knowledge_graphs,
-    generate_chunk_id,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -224,6 +225,7 @@ def process_pdf_file(
         )
         vector_store.add_document(processed_doc)
 
+        st.session_state.document_hash = processed_doc.document_hash
         st.session_state.vector_store = vector_store
         st.session_state.pdf_processed = True
         st.session_state.processing_status = "PDF processed successfully!"
@@ -239,16 +241,18 @@ def process_pdf_file(
 
 def handle_chat_message(query: str, model: ModelProvider):
     """Handle a chat message and update the knowledge graph"""
-    if not st.session_state.vector_store:
+    if not st.session_state.document_hash:
         return "Please upload and process a PDF file first."
 
+    # TODO better way to have types?
+    vector_store: VectorStore = st.session_state.vector_store
     try:
         enhanced_query = build_enhanced_query(
             query, st.session_state.conversation_history
         )
 
-        retrieved_chunks = st.session_state.vector_store.search_combined(
-            enhanced_query, top_k=3
+        retrieved_chunks = vector_store.search_combined(
+            enhanced_query, st.session_state.document_hash, top_k=3
         )
 
         new_chunks_content = []
@@ -389,7 +393,7 @@ def main():
             st.success("✅ PDF processed and ready!")
             if st.button("🔄 Upload New PDF"):
                 st.session_state.pdf_processed = False
-                st.session_state.vector_store = None
+                st.session_state.document_hash = None
                 st.session_state.conversation_history = []
                 st.session_state.session_graph = KnowledgeGraph(
                     nodes=[], relationships=[]

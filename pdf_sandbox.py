@@ -7,10 +7,9 @@ from pathlib import Path
 
 from chromadb.utils.embedding_functions import (
     OllamaEmbeddingFunction,
-    OpenAIEmbeddingFunction,
 )
 
-from models import OllamaModel, OpenAIModel
+from models import OllamaModel
 from pdf_processor import (
     ChunkingStrategy,
     ExtractionBackend,
@@ -79,7 +78,7 @@ def main():
 
     query = "statistical regularity"
     print(f"\nSearching for: '{query}'")
-    text_results = vector_store.search_text(query, top_k=3)
+    text_results = vector_store.search_text(query, processed_doc.document_hash, top_k=3)
 
     print("\nTop text results:")
     for i, (chunk, score) in enumerate(text_results):
@@ -89,7 +88,9 @@ def main():
 
     combined_query = "optimization pressure"
     print(f"\nCombined search for: '{combined_query}'")
-    combined_results = vector_store.search_combined(combined_query, top_k=5)
+    combined_results = vector_store.search_combined(
+        combined_query, processed_doc.document_hash, top_k=5
+    )
 
     print("\nTop combined results:")
     for i, (chunk, score) in enumerate(combined_results):
