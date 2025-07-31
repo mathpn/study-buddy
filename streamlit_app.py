@@ -428,9 +428,9 @@ def main():
             if query := st.chat_input("Ask a question about the document..."):
                 if chat_model_choice == "gpt-4.1 (OpenAI)":
                     chat_model = OpenAIModel("gpt-4.1")
-                if chat_model_choice == "gpt-4.1-mini (OpenAI)":
+                elif chat_model_choice == "gpt-4.1-mini (OpenAI)":
                     chat_model = OpenAIModel("gpt-4.1-mini")
-                if chat_model_choice == "o4-mini (OpenAI)":
+                elif chat_model_choice == "o4-mini (OpenAI)":
                     chat_model = OpenAIModel("o4-mini")
                 elif chat_model_choice == "qwen3 (Ollama)":
                     chat_model = OllamaModel("qwen3")
