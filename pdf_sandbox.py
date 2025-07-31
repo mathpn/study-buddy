@@ -11,6 +11,7 @@ from chromadb.utils.embedding_functions import (
 
 from models import OllamaModel
 from pdf_processor import (
+    hash_file,
     ChunkingStrategy,
     ExtractionBackend,
     PDFProcessor,
@@ -70,7 +71,8 @@ def main():
         OllamaEmbeddingFunction(model_name="nomic-embed-text"),
         persist_directory="./vector_store",
     )
-    vector_store.add_document(processed_doc)
+    file_hash = hash_file(pdf_path)
+    vector_store.add_document(file_hash, processed_doc)
 
     print("\n" + "=" * 50)
     print("SEARCH EXAMPLES")
@@ -78,7 +80,7 @@ def main():
 
     query = "statistical regularity"
     print(f"\nSearching for: '{query}'")
-    text_results = vector_store.search_text(query, processed_doc.document_hash, top_k=3)
+    text_results = vector_store.search_text(query, file_hash, top_k=3)
 
     print("\nTop text results:")
     for i, (chunk, score) in enumerate(text_results):
@@ -88,9 +90,7 @@ def main():
 
     combined_query = "optimization pressure"
     print(f"\nCombined search for: '{combined_query}'")
-    combined_results = vector_store.search_combined(
-        combined_query, processed_doc.document_hash, top_k=5
-    )
+    combined_results = vector_store.search_combined(combined_query, file_hash, top_k=5)
 
     print("\nTop combined results:")
     for i, (chunk, score) in enumerate(combined_results):

@@ -89,7 +89,16 @@ class ProcessedDocument:
     image_chunks: list[ImageChunk]
     raw_text: str
     metadata: dict[str, Any]
-    document_hash: str
+
+
+def hash_file(fpath) -> str:
+    """Return the 64-bit truncated sha256 hash of the file"""
+    hash_obj = hashlib.sha256()
+    with open(fpath, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            hash_obj.update(chunk)
+    file_hash = hash_obj.hexdigest()[:16]
+    return file_hash
 
 
 def _extract_docling(pdf_path) -> tuple[str, list[ImageElement]]:
@@ -512,12 +521,6 @@ class PDFProcessor:
         """
         logger.info(f"Processing PDF: {pdf_path}")
 
-        hash_obj = hashlib.sha256()
-        with open(pdf_path, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                hash_obj.update(chunk)
-        document_hash = hash_obj.hexdigest()[:16]
-
         raw_text, images = self.extract_content(pdf_path)
         text_chunks = self.chunk_text(raw_text)
 
@@ -551,7 +554,6 @@ class PDFProcessor:
                 "num_image_chunks": len(image_chunks),
                 "image_captioning_model": self.image_captioning_model,
             },
-            document_hash=document_hash,
         )
 
         logger.info(
@@ -600,15 +602,17 @@ class VectorStore:
         except NotFoundError:
             return False
 
-    def add_document(self, processed_doc: ProcessedDocument) -> None:
+    def add_document(
+        self, document_hash: str, processed_doc: ProcessedDocument
+    ) -> None:
         """Add a processed document to the vector store"""
-        if self.document_exists(processed_doc.document_hash):
+        if self.document_exists(document_hash):
             logger.info(
-                f"Document with hash {processed_doc.document_hash} already exists, skipping..."
+                f"Document with hash {document_hash} already exists, skipping..."
             )
             return
 
-        collection = self._get_collection(processed_doc.document_hash)
+        collection = self._get_collection(document_hash)
 
         # Add text chunks
         text_ids = []
@@ -625,7 +629,7 @@ class VectorStore:
                 {
                     **metadata,
                     "type": "text",
-                    "document_hash": processed_doc.document_hash,
+                    "document_hash": document_hash,
                 }
             )
 
@@ -658,7 +662,7 @@ class VectorStore:
                 {
                     **metadata,
                     "type": "image",
-                    "document_hash": processed_doc.document_hash,
+                    "document_hash": document_hash,
                 }
             )
 

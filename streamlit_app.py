@@ -21,6 +21,7 @@ from pdf_processor import (
     PDFProcessor,
     TextChunk,
     VectorStore,
+    hash_file,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -192,7 +193,6 @@ def process_pdf_file(
 ):
     """Process uploaded PDF file"""
     try:
-        # TODO hash files and save persist chunks separately
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
             tmp_file.write(uploaded_file.getvalue())
             tmp_file_path = tmp_file.name
@@ -206,27 +206,34 @@ def process_pdf_file(
         else:
             raise NotImplementedError(f"model not supported: {model_choice}")
 
-        processor = PDFProcessor(
-            image_captioning_model=image_model,
-            extraction_backend=extraction_backend,
-            chunking_strategy=chunking_strategy,
-            chunk_size=500,
-            chunk_overlap=50,
-            extract_images=True,
-        )
+        if st.session_state.vector_store is None:
+            vector_store = VectorStore(
+                OllamaEmbeddingFunction(model_name="nomic-embed-text"),
+                persist_directory="./vector_store_streamlit",  # FIXME better path
+            )
+            st.session_state.vector_store = vector_store
 
-        st.session_state.processing_status = "Extracting content from PDF..."
-        processed_doc = processor.process_pdf(tmp_file_path)
+        vector_store: VectorStore = st.session_state.vector_store
+        document_hash = hash_file(tmp_file_path)
+        if not st.session_state.vector_store.document_exists(document_hash):
+            processor = PDFProcessor(
+                image_captioning_model=image_model,
+                extraction_backend=extraction_backend,
+                chunking_strategy=chunking_strategy,
+                chunk_size=500,
+                chunk_overlap=50,
+                extract_images=True,
+            )
 
-        st.session_state.processing_status = "Creating vector store..."
-        vector_store = VectorStore(
-            OllamaEmbeddingFunction(model_name="nomic-embed-text"),
-            persist_directory="./vector_store_streamlit",  # FIXME better path
-        )
-        vector_store.add_document(processed_doc)
+            st.session_state.processing_status = "Extracting content from PDF..."
+            processed_doc = processor.process_pdf(tmp_file_path)
 
-        st.session_state.document_hash = processed_doc.document_hash
-        st.session_state.vector_store = vector_store
+            st.session_state.processing_status = "Creating vector store..."
+            vector_store.add_document(document_hash, processed_doc)
+        else:
+            logger.info("Document with hash %s already processed", document_hash)
+
+        st.session_state.document_hash = document_hash
         st.session_state.pdf_processed = True
         st.session_state.processing_status = "PDF processed successfully!"
 
