@@ -469,7 +469,8 @@ def main():
                 st.info("Start chatting to build the knowledge graph!")
 
     else:
-        st.markdown("""
+        st.markdown(
+            """
         ## Welcome to Study Assistant! 🎓
 
         This tool helps you study PDF documents by providing:
@@ -490,7 +491,8 @@ def main():
         - The knowledge graph updates as you chat
         - Images in PDFs are automatically captioned
         - Conversation history provides context for follow-up questions
-        """)
+        """
+        )
 
 
 if __name__ == "__main__":

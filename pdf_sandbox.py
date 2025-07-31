@@ -11,12 +11,12 @@ from chromadb.utils.embedding_functions import (
 
 from models import OllamaModel
 from pdf_processor import (
-    hash_file,
     ChunkingStrategy,
     ExtractionBackend,
     PDFProcessor,
     TextChunk,
     VectorStore,
+    hash_file,
 )
 
 logging.basicConfig(level=logging.INFO)
