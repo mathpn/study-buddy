@@ -15,7 +15,6 @@ from chat import (
 from graph import KnowledgeGraph, build_knowledge_graph
 from models import ModelProvider, OllamaModel, OpenAIModel
 from pdf_processor import (
-    ChunkingStrategy,
     ExtractionBackend,
     ImageChunk,
     PDFProcessor,
@@ -24,7 +23,7 @@ from pdf_processor import (
     hash_file,
 )
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 st.set_page_config(
@@ -188,9 +187,7 @@ def create_graph_visualization(graph: KnowledgeGraph):
     return fig
 
 
-def process_pdf_file(
-    uploaded_file, model_choice, extraction_backend, chunking_strategy
-):
+def process_pdf_file(uploaded_file, model_choice, extraction_backend):
     """Process uploaded PDF file"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
@@ -219,9 +216,6 @@ def process_pdf_file(
             processor = PDFProcessor(
                 image_captioning_model=image_model,
                 extraction_backend=extraction_backend,
-                chunking_strategy=chunking_strategy,
-                chunk_size=500,
-                chunk_overlap=50,
                 extract_images=True,
             )
 
@@ -242,7 +236,7 @@ def process_pdf_file(
 
     except Exception as e:
         st.session_state.processing_status = f"Error processing PDF: {str(e)}"
-        logger.error(f"Error processing PDF: {e}")
+        logger.error(f"Error processing PDF: {e}", exc_info=True)
         return False
 
 
@@ -316,6 +310,7 @@ def handle_chat_message(query: str, model: ModelProvider):
         messages.extend(st.session_state.conversation_history)
         messages.append({"role": "user", "content": query})
 
+        logger.debug("current messages: %s", messages)
         response_content = model.chat(messages=messages)
 
         st.session_state.conversation_history.append({"role": "user", "content": query})
@@ -375,13 +370,6 @@ def main():
             help="Method for extracting content from PDF",
         )
 
-        chunking_strategy = st.selectbox(
-            "Chunking Strategy",
-            [ChunkingStrategy.DOCUMENT_STRUCTURE, ChunkingStrategy.FIXED_SIZE],
-            format_func=lambda x: x.value.replace("_", " ").title(),
-            help="How to split the document into chunks",
-        )
-
         if uploaded_file is not None and not st.session_state.pdf_processed:
             if st.button("🚀 Process PDF", type="primary"):
                 with st.spinner("Processing PDF..."):
@@ -389,7 +377,6 @@ def main():
                         uploaded_file,
                         model_choice,
                         extraction_backend,
-                        chunking_strategy,
                     )
                     if success:
                         st.success("PDF processed successfully!")
