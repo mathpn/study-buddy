@@ -439,22 +439,6 @@ def main():
             graph_fig = create_graph_visualization(st.session_state.session_graph)
             st.plotly_chart(graph_fig, use_container_width=True)
 
-            if st.session_state.session_graph.nodes:
-                st.metric("Concepts", len(st.session_state.session_graph.nodes))
-                st.metric(
-                    "Relationships", len(st.session_state.session_graph.relationships)
-                )
-
-                node_types = {}
-                for node in st.session_state.session_graph.nodes:
-                    node_types[node.type] = node_types.get(node.type, 0) + 1
-
-                st.subheader("Node Types")
-                for node_type, count in node_types.items():
-                    st.write(f"**{node_type.title()}**: {count}")
-            else:
-                st.info("Start chatting to build the knowledge graph!")
-
     else:
         st.markdown(
             """
