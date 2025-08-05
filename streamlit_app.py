@@ -1,5 +1,7 @@
+import json
 import logging
 import os
+import random
 import tempfile
 
 import networkx as nx
@@ -48,6 +50,12 @@ def initialize_session_state():
         st.session_state.pdf_processed = False
     if "processing_status" not in st.session_state:
         st.session_state.processing_status = ""
+    if "quiz_question" not in st.session_state:
+        st.session_state.quiz_question = None
+    if "user_answer" not in st.session_state:
+        st.session_state.user_answer = None
+    if "show_feedback" not in st.session_state:
+        st.session_state.show_feedback = False
 
 
 def create_graph_visualization(graph: KnowledgeGraph):
@@ -240,7 +248,75 @@ def process_pdf_file(uploaded_file, model_choice, extraction_backend):
         return False
 
 
-def handle_chat_message(query: str, model: ModelProvider):
+def generate_question(
+    text_chunks: list[str], graph: KnowledgeGraph, model: ModelProvider
+):
+    """
+    Generates a multiple-choice question from text chunks and a knowledge graph.
+
+    Args:
+        text_chunks (List[str]): A list of text chunks for context.
+        graph (KnowledgeGraph): The knowledge graph to base the question on.
+        model (ModelProvider): The language model to use for generation.
+
+    Returns:
+        dict: A dictionary containing the question, options, and correct answer, or None on failure.
+    """
+    graph_json = graph.model_dump_json(indent=2)
+    text_context = "\n---\n".join(text_chunks)
+    prompt = f"""
+    You are a helpful assistant designed to create study questions.
+    Based on the provided Knowledge Graph and text excerpts from a document, generate a single multiple-choice question.
+    The question MUST be related to the concepts and relationships in the Knowledge Graph.
+    The provided text excerpts are for additional context.
+
+    The question should be in JSON format with the following keys: "question", "options", "answer".
+    The "options" should be a list of 4 strings, where one is the correct answer.
+    The "answer" should be the string of the correct option.
+
+    Knowledge Graph:
+    ---
+    {graph_json}
+    ---
+
+    Text Excerpts:
+    ---
+    {text_context}
+    ---
+
+    JSON output:
+    """
+    response_text = model.generate(prompt)
+    try:
+        # The response might be in a code block, so we clean it
+        if "```json" in response_text:
+            cleaned_response = response_text.split("```json")[1].split("```")[0].strip()
+        else:
+            cleaned_response = response_text.strip()
+
+        question_data = json.loads(cleaned_response)
+
+        # Basic validation
+        if (
+            isinstance(question_data, dict)
+            and "question" in question_data
+            and "options" in question_data
+            and "answer" in question_data
+            and isinstance(question_data["options"], list)
+            and len(question_data["options"]) > 1
+            and question_data["answer"] in question_data["options"]
+        ):
+            return question_data
+        else:
+            st.error("Generated question has an invalid format.")
+            return None
+    except (json.JSONDecodeError, IndexError) as e:
+        st.error(f"Failed to decode the generated question JSON: {e}")
+        st.text_area("Problematic Model Output", response_text, height=200)
+        return None
+
+
+def handle_chat_message(query: str, model: ModelProvider) -> str:
     """Handle a chat message and update the knowledge graph"""
     if not st.session_state.document_hash:
         return "Please upload and process a PDF file first."
@@ -402,36 +478,120 @@ def main():
         col1, col2 = st.columns([3, 2])
 
         with col1:
-            st.header("💬 Chat")
+            chat_tab, quiz_tab = st.tabs(["💬 Chat", "🧠 Quiz"])
 
-            chat_container = st.container()
-            with chat_container:
-                for i, message in enumerate(st.session_state.conversation_history):
-                    if message["role"] == "user":
-                        st.chat_message("user").write(message["content"])
+            with chat_tab:
+                chat_container = st.container()
+                with chat_container:
+                    for i, message in enumerate(st.session_state.conversation_history):
+                        if message["role"] == "user":
+                            st.chat_message("user").write(message["content"])
+                        else:
+                            st.chat_message("assistant").write(message["content"])
+
+                if query := st.chat_input("Ask a question about the document..."):
+                    if chat_model_choice == "gpt-4.1 (OpenAI)":
+                        chat_model = OpenAIModel("gpt-4.1")
+                    elif chat_model_choice == "gpt-4.1-mini (OpenAI)":
+                        chat_model = OpenAIModel("gpt-4.1-mini")
+                    elif chat_model_choice == "o4-mini (OpenAI)":
+                        chat_model = OpenAIModel("o4-mini")
+                    elif chat_model_choice == "qwen3 (Ollama)":
+                        chat_model = OllamaModel("qwen3")
+                    elif chat_model_choice == "gemma3 (Ollama)":
+                        chat_model = OllamaModel("gemma3")
                     else:
-                        st.chat_message("assistant").write(message["content"])
+                        raise NotImplementedError(
+                            f"unsupported model: {chat_model_choice}"
+                        )
 
-            if query := st.chat_input("Ask a question about the document..."):
-                if chat_model_choice == "gpt-4.1 (OpenAI)":
-                    chat_model = OpenAIModel("gpt-4.1")
-                elif chat_model_choice == "gpt-4.1-mini (OpenAI)":
-                    chat_model = OpenAIModel("gpt-4.1-mini")
-                elif chat_model_choice == "o4-mini (OpenAI)":
-                    chat_model = OpenAIModel("o4-mini")
-                elif chat_model_choice == "qwen3 (Ollama)":
-                    chat_model = OllamaModel("qwen3")
-                elif chat_model_choice == "gemma3 (Ollama)":
-                    chat_model = OllamaModel("gemma3")
-                else:
-                    raise NotImplementedError(f"unsupported model: {chat_model_choice}")
+                    st.chat_message("user").write(query)
+                    with st.spinner("Thinking..."):
+                        response = handle_chat_message(query, chat_model)
 
-                st.chat_message("user").write(query)
-                with st.spinner("Thinking..."):
-                    response = handle_chat_message(query, chat_model)
+                    st.chat_message("assistant").write(response)
+                    st.rerun()
 
-                st.chat_message("assistant").write(response)
-                st.rerun()
+            with quiz_tab:
+                st.header("🧠 Quiz Mode")
+
+                if st.button("Generate New Question"):
+                    st.session_state.quiz_question = None
+                    st.session_state.user_answer = None
+                    st.session_state.show_feedback = False
+                    if st.session_state.processed_chunks:
+                        with st.spinner("Generating question..."):
+                            num_chunks = min(2, len(st.session_state.processed_chunks))
+                            random_chunks = random.sample(
+                                list(st.session_state.processed_chunks), num_chunks
+                            )
+
+                            if chat_model_choice == "gpt-4.1 (OpenAI)":
+                                chat_model = OpenAIModel("gpt-4.1")
+                            elif chat_model_choice == "gpt-4.1-mini (OpenAI)":
+                                chat_model = OpenAIModel("gpt-4.1-mini")
+                            elif chat_model_choice == "o4-mini (OpenAI)":
+                                chat_model = OpenAIModel("o4-mini")
+                            elif chat_model_choice == "qwen3 (Ollama)":
+                                chat_model = OllamaModel("qwen3")
+                            elif chat_model_choice == "gemma3 (Ollama)":
+                                chat_model = OllamaModel("gemma3")
+                            else:
+                                raise NotImplementedError(
+                                    f"unsupported model: {chat_model_choice}"
+                                )
+
+                            question_data = generate_question(
+                                text_chunks=random_chunks,
+                                graph=st.session_state.session_graph,
+                                model=chat_model,
+                            )
+                            st.session_state.quiz_question = question_data
+                            st.rerun()
+                    else:
+                        st.warning(
+                            "Please process a document to generate quiz questions."
+                        )
+
+                if (
+                    st.session_state.quiz_question
+                    and not st.session_state.show_feedback
+                ):
+                    q_data = st.session_state.quiz_question
+                    with st.form(key="quiz_form"):
+                        st.markdown(f"#### {q_data['question']}")
+                        options = q_data["options"]
+                        user_answer = st.radio(
+                            "Select your answer:",
+                            options=options,
+                            index=None,
+                        )
+                        submitted = st.form_submit_button("Submit")
+                        if submitted:
+                            st.session_state.user_answer = user_answer
+                            st.session_state.show_feedback = True
+                            st.rerun()
+
+                if st.session_state.show_feedback and st.session_state.quiz_question:
+                    q_data = st.session_state.quiz_question
+                    user_answer = st.session_state.user_answer
+                    correct_answer = q_data["answer"]
+
+                    st.markdown(f"#### {q_data['question']}")
+                    st.write("Options:", ", ".join(q_data["options"]))
+
+                    if user_answer is None:
+                        st.warning("You did not select an answer.")
+                    elif user_answer == correct_answer:
+                        st.success(
+                            f"**Correct!** The right answer is **{correct_answer}**."
+                        )
+                    else:
+                        st.error(
+                            f"**Incorrect.** You chose: *{user_answer}*. The correct answer is **{correct_answer}**."
+                        )
+
+                    st.write("---")  # separator
 
         with col2:
             st.header("🧠 Knowledge Graph")
