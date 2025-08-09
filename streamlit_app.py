@@ -24,6 +24,7 @@ from pdf_processor import (
     VectorStore,
     hash_file,
 )
+from study_buddy import StudyBuddy
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -56,6 +57,12 @@ def initialize_session_state():
         st.session_state.user_answer = None
     if "show_feedback" not in st.session_state:
         st.session_state.show_feedback = False
+    if "app_state" not in st.session_state:
+        st.session_state.app_state = "WAITING_FOR_GOALS"
+    if "study_buddy" not in st.session_state:
+        st.session_state.study_buddy = None
+    if "document_hash" not in st.session_state:
+        st.session_state.document_hash = None
 
 
 def create_graph_visualization(graph: KnowledgeGraph):
@@ -402,13 +409,26 @@ def handle_chat_message(query: str, model: ModelProvider) -> str:
 
 
 def main():
-    """Main Streamlit app"""
+    """Main Streamlit app with guided study experience"""
     initialize_session_state()
 
     st.title("📚 Study Assistant")
-    st.markdown(
-        "Upload a PDF document and chat with an AI assistant enhanced with knowledge graphs!"
-    )
+    st.markdown("Upload a PDF document for a personalized, guided study experience!")
+
+    # Helper function to get chat model
+    def get_chat_model(chat_model_choice):
+        if chat_model_choice == "gpt-4.1 (OpenAI)":
+            return OpenAIModel("gpt-4.1")
+        elif chat_model_choice == "gpt-4.1-mini (OpenAI)":
+            return OpenAIModel("gpt-4.1-mini")
+        elif chat_model_choice == "o4-mini (OpenAI)":
+            return OpenAIModel("o4-mini")
+        elif chat_model_choice == "qwen3 (Ollama)":
+            return OllamaModel("qwen3")
+        elif chat_model_choice == "gemma3 (Ollama)":
+            return OllamaModel("gemma3")
+        else:
+            raise NotImplementedError(f"unsupported model: {chat_model_choice}")
 
     with st.sidebar:
         st.header("📁 Document Upload")
@@ -456,6 +476,9 @@ def main():
                     )
                     if success:
                         st.success("PDF processed successfully!")
+                        # Reset app state when new PDF is processed
+                        st.session_state.app_state = "WAITING_FOR_GOALS"
+                        st.session_state.study_buddy = None
                         st.rerun()
                     else:
                         st.error("Failed to process PDF. Check the logs for details.")
@@ -469,159 +492,235 @@ def main():
                     nodes=[], relationships=[]
                 )
                 st.session_state.processed_chunks = set()
+                st.session_state.app_state = "WAITING_FOR_GOALS"
+                st.session_state.study_buddy = None
                 st.rerun()
 
         if st.session_state.processing_status:
             st.info(st.session_state.processing_status)
 
+    # Main content area
     if st.session_state.pdf_processed:
-        col1, col2 = st.columns([3, 2])
+        # State: WAITING_FOR_GOALS
+        if st.session_state.app_state == "WAITING_FOR_GOALS":
+            st.header("🎯 Let's Set Your Study Goals")
+            st.markdown(
+                "Before we begin, tell me what you want to learn from this document. "
+                "This will help me create a personalized study plan just for you!"
+            )
 
-        with col1:
-            chat_tab, quiz_tab = st.tabs(["💬 Chat", "🧠 Quiz"])
+            study_goals = st.text_area(
+                "What are your study goals?",
+                placeholder="For example: I want to understand the key concepts of machine learning, particularly supervised learning algorithms and how they work...",
+                height=120,
+            )
 
-            with chat_tab:
-                chat_container = st.container()
-                with chat_container:
-                    for i, message in enumerate(st.session_state.conversation_history):
-                        if message["role"] == "user":
-                            st.chat_message("user").write(message["content"])
-                        else:
-                            st.chat_message("assistant").write(message["content"])
+            if st.button("🚀 Start My Study Journey", type="primary"):
+                if study_goals.strip():
+                    with st.spinner("Setting up your personalized study session..."):
+                        # Initialize StudyBuddy
+                        chat_model = get_chat_model(chat_model_choice)
+                        st.session_state.study_buddy = StudyBuddy(
+                            model=chat_model,
+                            vector_store=st.session_state.vector_store,
+                            document_hash=st.session_state.document_hash,
+                        )
+                        st.session_state.study_buddy.set_study_goals(study_goals)
 
-                if query := st.chat_input("Ask a question about the document..."):
-                    if chat_model_choice == "gpt-4.1 (OpenAI)":
-                        chat_model = OpenAIModel("gpt-4.1")
-                    elif chat_model_choice == "gpt-4.1-mini (OpenAI)":
-                        chat_model = OpenAIModel("gpt-4.1-mini")
-                    elif chat_model_choice == "o4-mini (OpenAI)":
-                        chat_model = OpenAIModel("o4-mini")
-                    elif chat_model_choice == "qwen3 (Ollama)":
-                        chat_model = OllamaModel("qwen3")
-                    elif chat_model_choice == "gemma3 (Ollama)":
-                        chat_model = OllamaModel("gemma3")
-                    else:
-                        raise NotImplementedError(
-                            f"unsupported model: {chat_model_choice}"
+                        # Generate assessment questions
+                        st.session_state.study_buddy.generate_assessment_questions()
+                        st.session_state.app_state = "ASSESSING"
+                        st.rerun()
+                else:
+                    st.warning("Please enter your study goals to continue.")
+
+        # State: ASSESSING
+        elif st.session_state.app_state == "ASSESSING":
+            st.header("📝 Quick Knowledge Assessment")
+            st.markdown(
+                "Let me ask you a few questions to understand your current knowledge level. "
+                "This will help me create the best study plan for you!"
+            )
+
+            questions = st.session_state.study_buddy.get_assessment_questions()
+
+            with st.form("assessment_form"):
+                answers = []
+                for i, question in enumerate(questions):
+                    st.subheader(f"Question {i + 1}")
+                    st.write(question)
+                    answer = st.text_area(
+                        f"Your answer:",
+                        key=f"assessment_answer_{i}",
+                        placeholder="Share what you know, even if you're not sure. It's okay to say 'I don't know' too!",
+                        height=80,
+                    )
+                    answers.append(answer)
+
+                if st.form_submit_button("✅ Submit Assessment", type="primary"):
+                    # Store all answers
+                    for i, answer in enumerate(answers):
+                        st.session_state.study_buddy.answer_assessment_question(
+                            i, answer
                         )
 
-                    st.chat_message("user").write(query)
-                    with st.spinner("Thinking..."):
-                        response = handle_chat_message(query, chat_model)
+                    # Check if all questions are answered
+                    if st.session_state.study_buddy.all_questions_answered():
+                        with st.spinner("Creating your personalized study plan..."):
+                            st.session_state.study_buddy.generate_study_plan()
+                            st.session_state.app_state = "STUDYING"
+                            st.rerun()
+                    else:
+                        st.warning("Please answer all questions to continue.")
 
-                    st.chat_message("assistant").write(response)
-                    st.rerun()
+        # State: STUDYING
+        elif st.session_state.app_state == "STUDYING":
+            col1, col2 = st.columns([3, 2])
 
-            with quiz_tab:
-                st.header("🧠 Quiz Mode")
+            with col1:
+                # Show study plan
+                st.header("📚 Your Personalized Study Plan")
+                with st.expander("📋 View Study Plan", expanded=True):
+                    study_plan = st.session_state.study_buddy.get_study_plan()
+                    st.markdown(study_plan)
 
-                if st.button("Generate New Question"):
-                    st.session_state.quiz_question = None
-                    st.session_state.user_answer = None
-                    st.session_state.show_feedback = False
-                    if st.session_state.processed_chunks:
-                        with st.spinner("Generating question..."):
-                            num_chunks = min(2, len(st.session_state.processed_chunks))
-                            random_chunks = random.sample(
-                                list(st.session_state.processed_chunks), num_chunks
-                            )
+                # Chat and Quiz tabs
+                chat_tab, quiz_tab = st.tabs(["💬 Study Chat", "🧠 Practice Quiz"])
 
-                            if chat_model_choice == "gpt-4.1 (OpenAI)":
-                                chat_model = OpenAIModel("gpt-4.1")
-                            elif chat_model_choice == "gpt-4.1-mini (OpenAI)":
-                                chat_model = OpenAIModel("gpt-4.1-mini")
-                            elif chat_model_choice == "o4-mini (OpenAI)":
-                                chat_model = OpenAIModel("o4-mini")
-                            elif chat_model_choice == "qwen3 (Ollama)":
-                                chat_model = OllamaModel("qwen3")
-                            elif chat_model_choice == "gemma3 (Ollama)":
-                                chat_model = OllamaModel("gemma3")
+                with chat_tab:
+                    st.markdown(
+                        "**Ask questions about your study topics or request clarifications on the study plan!**"
+                    )
+
+                    # Display conversation history
+                    chat_container = st.container()
+                    with chat_container:
+                        for message in st.session_state.conversation_history:
+                            if message["role"] == "user":
+                                st.chat_message("user").write(message["content"])
                             else:
-                                raise NotImplementedError(
-                                    f"unsupported model: {chat_model_choice}"
+                                st.chat_message("assistant").write(message["content"])
+
+                    # Chat input
+                    if query := st.chat_input(
+                        "Ask a question about the document or your study plan..."
+                    ):
+                        chat_model = get_chat_model(chat_model_choice)
+                        st.chat_message("user").write(query)
+                        with st.spinner("Thinking..."):
+                            response = handle_chat_message(query, chat_model)
+                        st.chat_message("assistant").write(response)
+                        st.rerun()
+
+                with quiz_tab:
+                    st.markdown(
+                        "**Test your understanding with questions based on your study plan!**"
+                    )
+
+                    if st.button("Generate New Question"):
+                        st.session_state.quiz_question = None
+                        st.session_state.user_answer = None
+                        st.session_state.show_feedback = False
+                        if st.session_state.processed_chunks:
+                            with st.spinner("Generating question..."):
+                                num_chunks = min(
+                                    3, len(st.session_state.processed_chunks)
+                                )
+                                random_chunks = random.sample(
+                                    list(st.session_state.processed_chunks), num_chunks
                                 )
 
-                            question_data = generate_question(
-                                text_chunks=random_chunks,
-                                graph=st.session_state.session_graph,
-                                model=chat_model,
+                                chat_model = get_chat_model(chat_model_choice)
+                                question_data = generate_question(
+                                    text_chunks=random_chunks,
+                                    graph=st.session_state.session_graph,
+                                    model=chat_model,
+                                )
+                                st.session_state.quiz_question = question_data
+                                st.rerun()
+                        else:
+                            st.warning("No content available for quiz generation.")
+
+                    if (
+                        st.session_state.quiz_question
+                        and not st.session_state.show_feedback
+                    ):
+                        q_data = st.session_state.quiz_question
+                        with st.form(key="quiz_form"):
+                            st.markdown(f"#### {q_data['question']}")
+                            options = q_data["options"]
+                            user_answer = st.radio(
+                                "Select your answer:",
+                                options=options,
+                                index=None,
                             )
-                            st.session_state.quiz_question = question_data
-                            st.rerun()
-                    else:
-                        st.warning(
-                            "Please process a document to generate quiz questions."
-                        )
+                            submitted = st.form_submit_button("Submit")
+                            if submitted:
+                                st.session_state.user_answer = user_answer
+                                st.session_state.show_feedback = True
+                                st.rerun()
 
-                if (
-                    st.session_state.quiz_question
-                    and not st.session_state.show_feedback
-                ):
-                    q_data = st.session_state.quiz_question
-                    with st.form(key="quiz_form"):
+                    if (
+                        st.session_state.show_feedback
+                        and st.session_state.quiz_question
+                    ):
+                        q_data = st.session_state.quiz_question
+                        user_answer = st.session_state.user_answer
+                        correct_answer = q_data["answer"]
+
                         st.markdown(f"#### {q_data['question']}")
-                        options = q_data["options"]
-                        user_answer = st.radio(
-                            "Select your answer:",
-                            options=options,
-                            index=None,
-                        )
-                        submitted = st.form_submit_button("Submit")
-                        if submitted:
-                            st.session_state.user_answer = user_answer
-                            st.session_state.show_feedback = True
-                            st.rerun()
+                        st.write("Options:", ", ".join(q_data["options"]))
 
-                if st.session_state.show_feedback and st.session_state.quiz_question:
-                    q_data = st.session_state.quiz_question
-                    user_answer = st.session_state.user_answer
-                    correct_answer = q_data["answer"]
+                        if user_answer is None:
+                            st.warning("You did not select an answer.")
+                        elif user_answer == correct_answer:
+                            st.success(
+                                f"**Correct!** The right answer is **{correct_answer}**."
+                            )
+                        else:
+                            st.error(
+                                f"**Incorrect.** You chose: *{user_answer}*. The correct answer is **{correct_answer}**."
+                            )
 
-                    st.markdown(f"#### {q_data['question']}")
-                    st.write("Options:", ", ".join(q_data["options"]))
+            with col2:
+                st.header("🧠 Knowledge Graph")
+                graph_fig = create_graph_visualization(st.session_state.session_graph)
+                st.plotly_chart(graph_fig, use_container_width=True)
 
-                    if user_answer is None:
-                        st.warning("You did not select an answer.")
-                    elif user_answer == correct_answer:
-                        st.success(
-                            f"**Correct!** The right answer is **{correct_answer}**."
-                        )
-                    else:
-                        st.error(
-                            f"**Incorrect.** You chose: *{user_answer}*. The correct answer is **{correct_answer}**."
-                        )
-
-                    st.write("---")  # separator
-
-        with col2:
-            st.header("🧠 Knowledge Graph")
-
-            graph_fig = create_graph_visualization(st.session_state.session_graph)
-            st.plotly_chart(graph_fig, use_container_width=True)
+                # Option to restart study session
+                if st.button("🔄 Start New Study Session"):
+                    st.session_state.app_state = "WAITING_FOR_GOALS"
+                    st.session_state.study_buddy = None
+                    st.session_state.conversation_history = []
+                    st.rerun()
 
     else:
         st.markdown(
             """
         ## Welcome to Study Assistant! 🎓
 
-        This tool helps you study PDF documents by providing:
+        This tool provides a **personalized, guided study experience** with your PDF documents:
 
-        - **📖 Smart Chat**: Ask questions about your document with RAG-enhanced responses
-        - **🧠 Knowledge Graph**: Automatically generated visual representation of key concepts
-        - **🔍 Context-Aware**: Uses conversation history for better understanding
-        - **🖼️ Image Support**: Processes and describes images in your PDFs
+        ### 🌟 What makes this special:
+        - **🎯 Goal-Oriented**: Tell me what you want to learn
+        - **📊 Knowledge Assessment**: I'll evaluate your current understanding
+        - **📋 Personalized Study Plan**: Get a custom roadmap based on your needs
+        - **💬 Smart Chat**: Ask questions with RAG-enhanced responses
+        - **🧠 Knowledge Graph**: Visual representation of key concepts
+        - **🧩 Practice Quizzes**: Test your understanding
 
-        ### How to get started:
-        1. Upload a PDF document using the sidebar
-        2. Configure your processing settings
-        3. Click "Process PDF" and wait for completion
-        4. Start asking questions about your document!
+        ### 🚀 How it works:
+        1. **Upload** a PDF document using the sidebar
+        2. **Set your study goals** - what do you want to learn?
+        3. **Take a quick assessment** to gauge your current knowledge
+        4. **Get your personalized study plan** with topics and guidance questions
+        5. **Study with AI assistance** - chat, explore, and practice!
 
-        ### Tips:
-        - Use specific questions for better results
-        - The knowledge graph updates as you chat
-        - Images in PDFs are automatically captioned
-        - Conversation history provides context for follow-up questions
+        ### 💡 Perfect for:
+        - Students preparing for exams
+        - Professionals learning new skills
+        - Researchers exploring new topics
+        - Anyone who wants structured, effective learning
         """
         )
 
