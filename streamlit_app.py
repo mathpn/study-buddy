@@ -617,6 +617,7 @@ def main():
                         "**Test your understanding with questions based on your study plan!**"
                     )
 
+                    # TODO use chat history and study plan to generate quiz questions
                     if st.button("Generate New Question"):
                         st.session_state.quiz_question = None
                         st.session_state.user_answer = None
