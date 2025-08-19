@@ -1,7 +1,8 @@
+import json
 import logging
-from typing import List, Dict, Any, Optional
-from pdf_processor import VectorStore, TextChunk, ImageChunk
+
 from models import ModelProvider
+from pdf_processor import ImageChunk, TextChunk, VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class StudyBuddy:
 
             # Prepare context from retrieved chunks
             context_parts = []
-            for chunk, score in retrieved_chunks:
+            for chunk, _ in retrieved_chunks:
                 if isinstance(chunk, TextChunk):
                     context_parts.append(chunk.content)
                 elif isinstance(chunk, ImageChunk):
@@ -62,9 +63,6 @@ class StudyBuddy:
             ]
 
             response = self.model.chat(messages=messages)
-
-            # Try to parse JSON response
-            import json
 
             try:
                 questions = json.loads(response)
@@ -180,10 +178,10 @@ class StudyBuddy:
         """Get the generated study plan."""
         return self.study_plan
 
-    def get_assessment_questions(self) -> List[str]:
+    def get_assessment_questions(self) -> list[str]:
         """Get the list of assessment questions."""
         return self.assessment_questions
 
-    def get_assessment_answers(self) -> List[str]:
+    def get_assessment_answers(self) -> list[str]:
         """Get the list of assessment answers."""
         return self.assessment_answers
