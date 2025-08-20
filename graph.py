@@ -151,4 +151,3 @@ if __name__ == "__main__":
         print(kg.model_dump_json(indent=2))
     else:
         print("No knowledge graph generated")
-
