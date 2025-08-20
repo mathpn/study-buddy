@@ -362,10 +362,14 @@ def handle_chat_message(query: str, model: ModelProvider) -> str:
                 if new_graph:
                     merge_knowledge_graphs(st.session_state.session_graph, new_graph)
                     logger.info(
-                        f"Added {len(new_graph.nodes)} new nodes and {len(new_graph.relationships)} new relationships"
+                        "Added %d new nodes and %d new relationships",
+                        len(new_graph.nodes),
+                        len(new_graph.relationships),
                     )
             except Exception as e:
-                logger.warning(f"Failed to generate knowledge graph: {e}")
+                logger.warning(
+                    "Failed to generate knowledge graph: %s", e, exc_info=True
+                )
 
         base_system_prompt = (
             "You are a helpful assistant whose goal is to help the users in their study. "
@@ -404,7 +408,7 @@ def handle_chat_message(query: str, model: ModelProvider) -> str:
         return response_content
 
     except Exception as e:
-        logger.error(f"Error in chat: {e}")
+        logger.error("Error in chat: %s", e, exc_info=True)
         return f"Sorry, I encountered an error: {str(e)}"
 
 
