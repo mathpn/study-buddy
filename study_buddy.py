@@ -25,7 +25,7 @@ class StudyBuddy:
     def set_study_goals(self, study_goals: str) -> None:
         """Set the user's study goals."""
         self.study_goals = study_goals
-        logger.info(f"Study goals set: {study_goals[:100]}...")
+        logger.info("Study goals set: %s...", study_goals[:100])
 
     def generate_assessment_questions(self, num_questions: int = 3) -> None:
         """Generate assessment questions based on study goals and document content."""
@@ -91,11 +91,11 @@ class StudyBuddy:
                 self.assessment_answers = [""] * len(self.assessment_questions)
 
             logger.info(
-                f"Generated {len(self.assessment_questions)} assessment questions"
+                "Generated %d assessment questions", len(self.assessment_questions)
             )
 
         except Exception as e:
-            logger.error(f"Error generating assessment questions: {e}")
+            logger.error("Error generating assessment questions: %s", e, exc_info=True)
             # Fallback questions
             self.assessment_questions = [
                 "What do you already know about the main topics in this document?",
@@ -108,7 +108,7 @@ class StudyBuddy:
         """Store the user's answer to an assessment question."""
         if 0 <= question_idx < len(self.assessment_answers):
             self.assessment_answers[question_idx] = answer
-            logger.debug(f"Recorded answer for question {question_idx}")
+            logger.debug("Recorded answer for question %s", question_idx)
 
     def all_questions_answered(self) -> bool:
         """Check if all assessment questions have been answered."""
@@ -124,7 +124,7 @@ class StudyBuddy:
 
             # Prepare context from retrieved chunks
             context_parts = []
-            for chunk, score in retrieved_chunks:
+            for chunk, _ in retrieved_chunks:
                 if isinstance(chunk, TextChunk):
                     context_parts.append(chunk.content)
                 elif isinstance(chunk, ImageChunk):
@@ -167,7 +167,7 @@ class StudyBuddy:
             logger.info("Generated personalized study plan")
 
         except Exception as e:
-            logger.error(f"Error generating study plan: {e}")
+            logger.error("Error generating study plan: %s", e, exc_info=True)
             self.study_plan = (
                 "# Your Study Plan\n\n"
                 "I encountered an error generating your personalized study plan. "
