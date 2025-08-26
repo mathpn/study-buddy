@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import random
@@ -9,22 +8,15 @@ import plotly.graph_objects as go
 import streamlit as st
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
-from chat import (
-    build_enhanced_query,
-    generate_chunk_id,
-    merge_knowledge_graphs,
-)
-from graph import KnowledgeGraph, build_knowledge_graph
+from graph import KnowledgeGraph
 from models import ModelProvider, OllamaModel, OpenAIModel
 from pdf_processor import (
     ExtractionBackend,
-    ImageChunk,
     PDFProcessor,
-    TextChunk,
     VectorStore,
     hash_file,
 )
-from study_buddy import StudyBuddy, generate_question
+from study_buddy import StudyBuddy, chat, generate_question
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -153,6 +145,7 @@ def create_graph_visualization(graph: KnowledgeGraph):
         node_x.append(x)
         node_y.append(y)
 
+        # FIXME this fails sometimes
         node_data = next(n for n in graph.nodes if n.id == node_id)
         node_text.append(node_data.label)
         node_info.append(
@@ -202,7 +195,9 @@ def create_graph_visualization(graph: KnowledgeGraph):
     return fig
 
 
-def process_pdf_file(uploaded_file, model_choice: str, extraction_backend: ExtractionBackend):
+def process_pdf_file(
+    uploaded_file, model_choice: str, extraction_backend: ExtractionBackend
+):
     """Process uploaded PDF file"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
@@ -260,88 +255,39 @@ def handle_chat_message(query: str, model: ModelProvider) -> str:
     if not st.session_state.document_hash:
         return "Please upload and process a PDF file first."
 
-    # TODO better way to have types?
-    vector_store: VectorStore = st.session_state.vector_store
     try:
-        enhanced_query = build_enhanced_query(
-            query, st.session_state.conversation_history
+        response_content, conversation_history, session_graph, processed_chunks = chat(
+            query,
+            st.session_state.document_hash,
+            st.session_state.vector_store,
+            st.session_state.conversation_history,
+            st.session_state.processed_chunks,
+            st.session_state.session_graph,
+            model,
         )
-
-        retrieved_chunks = vector_store.search_combined(
-            enhanced_query, st.session_state.document_hash, top_k=3
-        )
-
-        new_chunks_content = []
-        for chunk, _ in retrieved_chunks:
-            chunk_id = generate_chunk_id(chunk)
-
-            if chunk_id not in st.session_state.processed_chunks:
-                if isinstance(chunk, TextChunk):
-                    chunk_content = chunk.content
-                elif isinstance(chunk, ImageChunk):
-                    chunk_content = f"Image Caption: {chunk.caption}"
-                else:
-                    chunk_content = str(chunk)
-
-                new_chunks_content.append(chunk_content)
-                st.session_state.processed_chunks.add(chunk_id)
-
-        if new_chunks_content:
-            combined_new_content = "\n\n---\n\n".join(new_chunks_content)
-
-            try:
-                new_graph = build_knowledge_graph(combined_new_content, model)
-                if new_graph:
-                    merge_knowledge_graphs(st.session_state.session_graph, new_graph)
-                    logger.info(
-                        "Added %d new nodes and %d new relationships",
-                        len(new_graph.nodes),
-                        len(new_graph.relationships),
-                    )
-            except Exception as e:
-                logger.warning(
-                    "Failed to generate knowledge graph: %s", e, exc_info=True
-                )
-
-        base_system_prompt = (
-            "You are a helpful assistant whose goal is to help the users in their study. "
-            "Answer the user's questions based on the provided context. "
-            "The context is retrieved from a document and may include text and image captions. "
-            "If the information is not in the context, say you don't know. "
-            "Keep your answers concise and relevant to the question."
-        )
-
-        messages = []
-        system_content = base_system_prompt
-
-        if retrieved_chunks:
-            context_parts = []
-            for chunk, _ in retrieved_chunks:
-                if isinstance(chunk, TextChunk):
-                    context_parts.append(chunk.content)
-                elif isinstance(chunk, ImageChunk):
-                    context_parts.append(f"Image Caption: {chunk.caption}")
-
-            context = "\n---\n".join(context_parts)
-            system_content += f"\n\nRelevant context from the document:\n{context}"
-
-        messages.append({"role": "system", "content": system_content})
-        messages.extend(st.session_state.conversation_history)
-        messages.append({"role": "user", "content": query})
-
-        logger.debug("current messages: %s", messages)
-        response_content = model.chat(messages=messages)
-
-        st.session_state.conversation_history.append({"role": "user", "content": query})
-        st.session_state.conversation_history.append(
-            {"role": "assistant", "content": response_content}
-        )
-
+        st.session_state.conversation_history = conversation_history
+        st.session_state.processed_chunks = processed_chunks
+        st.session_state.session_graph = session_graph
         return response_content
 
     except Exception as e:
         logger.error("Error in chat: %s", e, exc_info=True)
-        return f"Sorry, I encountered an error: {str(e)}"
+        return "Sorry, I've encountered an error, please try again"
+
+
+def get_chat_model(chat_model_choice):
+    if chat_model_choice == "gpt-4.1 (OpenAI)":
+        return OpenAIModel("gpt-4.1")
+    elif chat_model_choice == "gpt-4.1-mini (OpenAI)":
+        return OpenAIModel("gpt-4.1-mini")
+    elif chat_model_choice == "o4-mini (OpenAI)":
+        return OpenAIModel("o4-mini")
+    elif chat_model_choice == "qwen3 (Ollama)":
+        return OllamaModel("qwen3")
+    elif chat_model_choice == "gemma3 (Ollama)":
+        return OllamaModel("gemma3")
+    else:
+        raise NotImplementedError(f"unsupported model: {chat_model_choice}")
 
 
 def main():
@@ -350,21 +296,6 @@ def main():
 
     st.title("📚 Study Assistant")
     st.markdown("Upload a PDF document for a personalized, guided study experience!")
-
-    # Helper function to get chat model
-    def get_chat_model(chat_model_choice):
-        if chat_model_choice == "gpt-4.1 (OpenAI)":
-            return OpenAIModel("gpt-4.1")
-        elif chat_model_choice == "gpt-4.1-mini (OpenAI)":
-            return OpenAIModel("gpt-4.1-mini")
-        elif chat_model_choice == "o4-mini (OpenAI)":
-            return OpenAIModel("o4-mini")
-        elif chat_model_choice == "qwen3 (Ollama)":
-            return OllamaModel("qwen3")
-        elif chat_model_choice == "gemma3 (Ollama)":
-            return OllamaModel("gemma3")
-        else:
-            raise NotImplementedError(f"unsupported model: {chat_model_choice}")
 
     with st.sidebar:
         st.header("📁 Document Upload")
@@ -486,7 +417,7 @@ def main():
                     st.subheader(f"Question {i + 1}")
                     st.write(question)
                     answer = st.text_area(
-                        f"Your answer:",
+                        "Your answer:",
                         key=f"assessment_answer_{i}",
                         placeholder="Share what you know, even if you're not sure. It's okay to say 'I don't know' too!",
                         height=80,

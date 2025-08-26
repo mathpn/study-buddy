@@ -133,6 +133,38 @@ def build_knowledge_graph(chunk: str, model: ModelProvider) -> KnowledgeGraph | 
     )
 
 
+def merge_knowledge_graphs(
+    main_graph: KnowledgeGraph, new_graph: KnowledgeGraph
+) -> None:
+    """
+    Merge a new knowledge graph into the main cumulative graph.
+    Avoids duplicate nodes (by id) and relationships.
+
+    Args:
+        main_graph: The cumulative session graph to merge into
+        new_graph: The new graph fragment to merge
+    """
+    existing_node_ids = {node.id for node in main_graph.nodes}
+    existing_relationships = {
+        (rel.source, rel.target, rel.relationship) for rel in main_graph.relationships
+    }
+
+    for node in new_graph.nodes:
+        if node.id not in existing_node_ids:
+            main_graph.nodes.append(node)
+            existing_node_ids.add(node.id)
+
+    for relationship in new_graph.relationships:
+        rel_key = (
+            relationship.source,
+            relationship.target,
+            relationship.relationship,
+        )
+        if rel_key not in existing_relationships:
+            main_graph.relationships.append(relationship)
+            existing_relationships.add(rel_key)
+
+
 if __name__ == "__main__":
     from models import OpenAIModel
 

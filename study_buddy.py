@@ -3,9 +3,9 @@ import logging
 
 from pydantic import BaseModel
 
+from graph import KnowledgeGraph, build_knowledge_graph, merge_knowledge_graphs
 from models import ModelProvider
 from pdf_processor import ImageChunk, TextChunk, VectorStore
-from graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,142 @@ def generate_question(
         return None
 
     return response.model_dump()
+
+
+def build_enhanced_query(
+    current_query: str, conversation_history: list, max_history_tokens: int = 100
+) -> str:
+    """
+    Enhance the current query with relevant context from conversation history.
+
+    Args:
+        current_query: The user's current question
+        conversation_history: List of previous user/assistant messages
+        max_history_tokens: Rough token limit for history context (approximate)
+
+    Returns:
+        Enhanced query string for better retrieval
+    """
+    if not conversation_history:
+        return current_query
+
+    recent_user_queries = []
+    char_count = 0
+
+    for message in reversed(conversation_history):
+        if message["role"] == "user":
+            query_text = message["content"]
+            # Rough token estimation: ~4 chars per token
+            if char_count + len(query_text) > max_history_tokens * 4:
+                break
+            recent_user_queries.insert(0, query_text)
+            char_count += len(query_text)
+
+    if recent_user_queries:
+        context_queries = (
+            recent_user_queries[-2:]
+            if len(recent_user_queries) > 2
+            else recent_user_queries
+        )
+        enhanced_query = f"{' '.join(context_queries)} {current_query}"
+        return enhanced_query
+
+    return current_query
+
+
+def generate_chunk_id(chunk) -> str:
+    """
+    Generate a unique identifier for a chunk.
+    This is a simple hash based on content.
+    """
+    if isinstance(chunk, TextChunk):
+        content = chunk.content
+    elif isinstance(chunk, ImageChunk):
+        content = chunk.caption
+    else:
+        content = str(chunk)
+
+    return str(hash(content))
+
+
+def chat(
+    query: str,
+    document_hash: str,
+    vector_store: VectorStore,
+    conversation_history,
+    processed_chunks,
+    session_graph: KnowledgeGraph,
+    model: ModelProvider,
+):
+    enhanced_query = build_enhanced_query(query, conversation_history)
+
+    retrieved_chunks = vector_store.search_combined(
+        enhanced_query, document_hash, top_k=3
+    )
+
+    new_chunks_content = []
+    for chunk, _ in retrieved_chunks:
+        chunk_id = generate_chunk_id(chunk)
+
+        if chunk_id not in processed_chunks:
+            if isinstance(chunk, TextChunk):
+                chunk_content = chunk.content
+            elif isinstance(chunk, ImageChunk):
+                chunk_content = f"Image Caption: {chunk.caption}"
+            else:
+                chunk_content = str(chunk)
+
+            new_chunks_content.append(chunk_content)
+            processed_chunks.add(chunk_id)
+
+    if new_chunks_content:
+        combined_new_content = "\n\n---\n\n".join(new_chunks_content)
+
+        try:
+            new_graph = build_knowledge_graph(combined_new_content, model)
+            if new_graph:
+                merge_knowledge_graphs(session_graph, new_graph)
+                logger.info(
+                    "Added %d new nodes and %d new relationships",
+                    len(new_graph.nodes),
+                    len(new_graph.relationships),
+                )
+        except Exception as e:
+            logger.warning("Failed to generate knowledge graph: %s", e, exc_info=True)
+
+    base_system_prompt = (
+        "You are a helpful assistant whose goal is to help the users in their study. "
+        "Answer the user's questions based on the provided context. "
+        "The context is retrieved from a document and may include text and image captions. "
+        "If the information is not in the context, say you don't know. "
+        "Keep your answers concise and relevant to the question."
+    )
+
+    messages = []
+    system_content = base_system_prompt
+
+    if retrieved_chunks:
+        context_parts = []
+        for chunk, _ in retrieved_chunks:
+            if isinstance(chunk, TextChunk):
+                context_parts.append(chunk.content)
+            elif isinstance(chunk, ImageChunk):
+                context_parts.append(f"Image Caption: {chunk.caption}")
+
+        context = "\n---\n".join(context_parts)
+        system_content += f"\n\nRelevant context from the document:\n{context}"
+
+    messages.append({"role": "system", "content": system_content})
+    messages.extend(conversation_history)
+    messages.append({"role": "user", "content": query})
+
+    logger.debug("current messages: %s", messages)
+    response_content = model.chat(messages=messages)
+
+    conversation_history.append({"role": "user", "content": query})
+    conversation_history.append({"role": "assistant", "content": response_content})
+
+    return response_content, conversation_history, session_graph, processed_chunks
 
 
 class StudyBuddy:

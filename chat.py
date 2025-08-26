@@ -19,79 +19,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def build_enhanced_query(
-    current_query: str, conversation_history: list, max_history_tokens: int = 100
-) -> str:
-    """
-    Enhance the current query with relevant context from conversation history.
-
-    Args:
-        current_query: The user's current question
-        conversation_history: List of previous user/assistant messages
-        max_history_tokens: Rough token limit for history context (approximate)
-
-    Returns:
-        Enhanced query string for better retrieval
-    """
-    if not conversation_history:
-        return current_query
-
-    recent_user_queries = []
-    char_count = 0
-
-    for message in reversed(conversation_history):
-        if message["role"] == "user":
-            query_text = message["content"]
-            # Rough token estimation: ~4 chars per token
-            if char_count + len(query_text) > max_history_tokens * 4:
-                break
-            recent_user_queries.insert(0, query_text)
-            char_count += len(query_text)
-
-    if recent_user_queries:
-        context_queries = (
-            recent_user_queries[-2:]
-            if len(recent_user_queries) > 2
-            else recent_user_queries
-        )
-        enhanced_query = f"{' '.join(context_queries)} {current_query}"
-        return enhanced_query
-
-    return current_query
-
-
-def merge_knowledge_graphs(
-    main_graph: KnowledgeGraph, new_graph: KnowledgeGraph
-) -> None:
-    """
-    Merge a new knowledge graph into the main cumulative graph.
-    Avoids duplicate nodes (by id) and relationships.
-
-    Args:
-        main_graph: The cumulative session graph to merge into
-        new_graph: The new graph fragment to merge
-    """
-    existing_node_ids = {node.id for node in main_graph.nodes}
-    existing_relationships = {
-        (rel.source, rel.target, rel.relationship) for rel in main_graph.relationships
-    }
-
-    for node in new_graph.nodes:
-        if node.id not in existing_node_ids:
-            main_graph.nodes.append(node)
-            existing_node_ids.add(node.id)
-
-    for relationship in new_graph.relationships:
-        rel_key = (
-            relationship.source,
-            relationship.target,
-            relationship.relationship,
-        )
-        if rel_key not in existing_relationships:
-            main_graph.relationships.append(relationship)
-            existing_relationships.add(rel_key)
-
-
 def display_knowledge_graph(graph: KnowledgeGraph) -> None:
     """
     Print a simple text representation of the knowledge graph.
@@ -137,21 +64,6 @@ def display_knowledge_graph(graph: KnowledgeGraph) -> None:
                 print(f"    ({rel.description})")
 
     print("--- End Knowledge Graph ---\n")
-
-
-def generate_chunk_id(chunk) -> str:
-    """
-    Generate a unique identifier for a chunk.
-    This is a simple hash based on content.
-    """
-    if isinstance(chunk, TextChunk):
-        content = chunk.content
-    elif isinstance(chunk, ImageChunk):
-        content = chunk.caption
-    else:
-        content = str(chunk)
-
-    return str(hash(content))
 
 
 def chat(vector_store: VectorStore, model: ModelProvider):
