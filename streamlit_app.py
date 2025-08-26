@@ -424,7 +424,7 @@ def main():
                     )
                     answers.append(answer)
 
-                if st.form_submit_button("✅ Submit Assessment", type="primary"):
+                if st.form_submit_button("Submit Assessment", type="primary"):
                     # Store all answers
                     for i, answer in enumerate(answers):
                         st.session_state.study_buddy.answer_assessment_question(
@@ -433,7 +433,7 @@ def main():
 
                     # Check if all questions are answered
                     if st.session_state.study_buddy.all_questions_answered():
-                        with st.spinner("Creating your personalized study plan..."):
+                        with st.spinner("Creating your study plan..."):
                             st.session_state.study_buddy.generate_study_plan()
                             st.session_state.app_state = "STUDYING"
                             st.rerun()
@@ -446,7 +446,7 @@ def main():
 
             with col1:
                 # Show study plan
-                st.header("📚 Your Personalized Study Plan")
+                st.header("Your Study Plan")
                 with st.expander("📋 View Study Plan", expanded=True):
                     study_plan = st.session_state.study_buddy.get_study_plan()
                     st.markdown(study_plan)
