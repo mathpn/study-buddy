@@ -1,5 +1,5 @@
-import json
 import logging
+from textwrap import dedent
 
 from pydantic import BaseModel
 
@@ -18,6 +18,12 @@ class QuestionSchema(BaseModel):
     answer: str
 
 
+class AssessmentSchema(BaseModel):
+    """Schema for a list of questions."""
+
+    questions: list[str]
+
+
 def generate_question(
     text_chunks: list[str], graph: KnowledgeGraph, model: ModelProvider
 ) -> dict | None:
@@ -34,7 +40,7 @@ def generate_question(
     """
     graph_json = graph.model_dump_json(indent=2)
     text_context = "\n---\n".join(text_chunks)
-    prompt = f"""
+    system_prompt = """
     You are a helpful assistant designed to create study questions.
     Based on the provided Knowledge Graph and text excerpts from a document, generate a single multiple-choice question.
     The question MUST be related to the concepts and relationships in the Knowledge Graph.
@@ -43,7 +49,9 @@ def generate_question(
     The question should be in JSON format with the following keys: "question", "options", "answer".
     The "options" should be a list of 4 strings, where one is the correct answer.
     The "answer" should be the string of the correct option.
+    """
 
+    user_prompt = f"""
     Knowledge Graph:
     ---
     {graph_json}
@@ -56,7 +64,18 @@ def generate_question(
 
     JSON output:
     """
-    response = model.generate_with_schema(prompt, schema=QuestionSchema)
+
+    messages = [
+        {
+            "role": "system",
+            "content": [{"type": "text", "text": dedent(system_prompt)}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": dedent(user_prompt)}],
+        },
+    ]
+    response = model.chat_with_schema(messages, schema=QuestionSchema)
     if response is None:
         logger.error("Failed to generate question.")
         return None
@@ -207,9 +226,13 @@ class StudyBuddy:
         self, model: ModelProvider, vector_store: VectorStore, document_hash: str
     ):
         """Initialize StudyBuddy with model and document context."""
+
         self.model = model
         self.vector_store = vector_store
         self.document_hash = document_hash
+        self.conversation_history = []
+        self.processed_chunks = set()
+        self.session_graph = KnowledgeGraph(nodes=[], relationships=[])
         self.study_goals = ""
         self.assessment_questions = []
         self.assessment_answers = []
@@ -248,41 +271,37 @@ class StudyBuddy:
             )
 
             messages = [
-                {"role": "system", "content": system_prompt},
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt}],
+                },
                 {
                     "role": "user",
-                    "content": f"Study goals: {self.study_goals}\n\nDocument context:\n{context}",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"Study goals: {self.study_goals}\n\nDocument context:\n{context}",
+                        }
+                    ],
                 },
             ]
 
-            response = self.model.chat(messages=messages)
-
-            try:
-                questions = json.loads(response)
-                if isinstance(questions, list):
-                    self.assessment_questions = questions[:num_questions]
-                    self.assessment_answers = [""] * len(self.assessment_questions)
-                else:
-                    raise ValueError("Response is not a list")
-            except (json.JSONDecodeError, ValueError):
-                # Fallback: extract questions from text response
-                lines = response.strip().split("\n")
-                questions = []
-                for line in lines:
-                    line = line.strip()
-                    if line and (
-                        line.startswith('"')
-                        or line.startswith("1.")
-                        or line.startswith("-")
-                    ):
-                        # Clean up the line
-                        question = line.strip('"').strip("1234567890.-").strip()
-                        if question:
-                            questions.append(question)
-
-                self.assessment_questions = questions[:num_questions]
+            response = self.model.chat_with_schema(
+                messages=messages, schema=AssessmentSchema
+            )
+            if response is None:
+                # Fallback questions
+                self.assessment_questions = [
+                    "What do you already know about the main topics in this document?",
+                    "What specific aspects would you like to understand better?",
+                    "Are there any concepts or terms that are completely new to you?",
+                ]
                 self.assessment_answers = [""] * len(self.assessment_questions)
+                return
 
+            questions = response.questions
+            self.assessment_questions = questions[:num_questions]
+            self.assessment_answers = [""] * len(self.assessment_questions)
             logger.info(
                 "Generated %d assessment questions", len(self.assessment_questions)
             )

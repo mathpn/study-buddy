@@ -67,14 +67,9 @@ class KnowledgeGraph(BaseModel):
 
 
 def build_knowledge_graph(chunk: str, model: ModelProvider) -> KnowledgeGraph | None:
-    prompt = """
+    system_prompt = """
     ## Task
     Extract a knowledge graph from the provided document chunk, focusing on concepts essential for studying and understanding the material.
-
-    ## Document Chunk
-    ```
-    {DOCUMENT_CHUNK}
-    ```
 
     ## Instructions
 
@@ -128,8 +123,30 @@ def build_knowledge_graph(chunk: str, model: ModelProvider) -> KnowledgeGraph | 
 
     Extract only the most important concepts and relationships for learning this material.
     """
-    return model.generate_with_schema(
-        dedent(prompt.format(DOCUMENT_CHUNK=chunk)), KnowledgeGraph
+
+    user_prompt = """
+    ## Document Chunks
+
+    {DOCUMENT_CHUNK}
+    """
+
+    return model.chat_with_schema(
+        [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": dedent(system_prompt)}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": dedent(user_prompt.format(DOCUMENT_CHUNK=chunk)),
+                    }
+                ],
+            },
+        ],
+        KnowledgeGraph,
     )
 
 

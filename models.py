@@ -4,6 +4,7 @@ from typing import Type, TypeVar
 
 import ollama
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
@@ -14,13 +15,15 @@ class ModelProvider(ABC):
     def generate(self, prompt: str) -> str: ...
 
     @abstractmethod
-    def chat(self, messages: list[dict[str, str]]) -> str: ...
+    def chat(self, messages: list[ChatCompletionMessageParam]) -> str: ...
 
     @abstractmethod
     def generate_with_images(self, prompt: str, images_b64: list[str]) -> str: ...
 
     @abstractmethod
-    def generate_with_schema(self, prompt: str, schema: Type[T]) -> T | None: ...
+    def chat_with_schema(
+        self, messages: list[ChatCompletionMessageParam], schema: Type[T]
+    ) -> T | None: ...
 
 
 class OllamaModel(ModelProvider):
@@ -37,9 +40,11 @@ class OllamaModel(ModelProvider):
         response = self.client.chat(model=self.model_name, messages=messages)
         return response["message"]["content"].strip()
 
-    def generate_with_schema(self, prompt: str, schema: Type[T]) -> T | None:
-        response = self.client.generate(
-            model=self.model_name, prompt=prompt, format=schema.model_json_schema()
+    def chat_with_schema(
+        self, messages: list[ChatCompletionMessageParam], schema: Type[T]
+    ) -> T | None:
+        response = self.client.chat(
+            model=self.model_name, messages=messages, format=schema.model_json_schema()
         )
         return schema.model_validate_json(response["response"])
 
@@ -63,17 +68,19 @@ class OpenAIModel(ModelProvider):
         )
         return response.choices[0].message.content.strip()
 
-    def chat(self, messages: list[dict[str, str]]) -> str:
+    def chat(self, messages: list[ChatCompletionMessageParam]) -> str:
         """Handles chat with conversation history."""
         response = self.client.chat.completions.create(
             model=self.model_name, messages=messages
         )
         return response.choices[0].message.content.strip()
 
-    def generate_with_schema(self, prompt: str, schema: Type[T]) -> T | None:
+    def chat_with_schema(
+        self, messages: list[ChatCompletionMessageParam], schema: Type[T]
+    ) -> T | None:
         response = self.client.chat.completions.parse(
             model=self.model_name,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             response_format=schema,
         )
         return response.choices[0].message.parsed
