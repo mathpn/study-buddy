@@ -1,16 +1,10 @@
 import logging
-from pathlib import Path
 from typing import Set
 
-from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
-
 from graph import KnowledgeGraph, build_knowledge_graph
-from models import ModelProvider, OllamaModel, OpenAIModel
+from models import ModelProvider
 from pdf_processor import (
-    ChunkingStrategy,
-    ExtractionBackend,
     ImageChunk,
-    PDFProcessor,
     TextChunk,
     VectorStore,
 )
