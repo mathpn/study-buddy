@@ -202,7 +202,7 @@ def create_graph_visualization(graph: KnowledgeGraph):
     return fig
 
 
-def process_pdf_file(uploaded_file, model_choice, extraction_backend):
+def process_pdf_file(uploaded_file, model_choice: str, extraction_backend: ExtractionBackend):
     """Process uploaded PDF file"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
@@ -251,7 +251,7 @@ def process_pdf_file(uploaded_file, model_choice, extraction_backend):
 
     except Exception as e:
         st.session_state.processing_status = f"Error processing PDF: {str(e)}"
-        logger.error(f"Error processing PDF: {e}", exc_info=True)
+        logger.error("Error processing PDF: %s", e, exc_info=True)
         return False
 
 
@@ -316,7 +316,7 @@ def handle_chat_message(query: str, model: ModelProvider) -> str:
 
         if retrieved_chunks:
             context_parts = []
-            for chunk, score in retrieved_chunks:
+            for chunk, _ in retrieved_chunks:
                 if isinstance(chunk, TextChunk):
                     context_parts.append(chunk.content)
                 elif isinstance(chunk, ImageChunk):
