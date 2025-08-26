@@ -24,7 +24,7 @@ from pdf_processor import (
     VectorStore,
     hash_file,
 )
-from study_buddy import StudyBuddy
+from study_buddy import StudyBuddy, generate_question
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -253,74 +253,6 @@ def process_pdf_file(uploaded_file, model_choice, extraction_backend):
         st.session_state.processing_status = f"Error processing PDF: {str(e)}"
         logger.error(f"Error processing PDF: {e}", exc_info=True)
         return False
-
-
-def generate_question(
-    text_chunks: list[str], graph: KnowledgeGraph, model: ModelProvider
-):
-    """
-    Generates a multiple-choice question from text chunks and a knowledge graph.
-
-    Args:
-        text_chunks (List[str]): A list of text chunks for context.
-        graph (KnowledgeGraph): The knowledge graph to base the question on.
-        model (ModelProvider): The language model to use for generation.
-
-    Returns:
-        dict: A dictionary containing the question, options, and correct answer, or None on failure.
-    """
-    graph_json = graph.model_dump_json(indent=2)
-    text_context = "\n---\n".join(text_chunks)
-    prompt = f"""
-    You are a helpful assistant designed to create study questions.
-    Based on the provided Knowledge Graph and text excerpts from a document, generate a single multiple-choice question.
-    The question MUST be related to the concepts and relationships in the Knowledge Graph.
-    The provided text excerpts are for additional context.
-
-    The question should be in JSON format with the following keys: "question", "options", "answer".
-    The "options" should be a list of 4 strings, where one is the correct answer.
-    The "answer" should be the string of the correct option.
-
-    Knowledge Graph:
-    ---
-    {graph_json}
-    ---
-
-    Text Excerpts:
-    ---
-    {text_context}
-    ---
-
-    JSON output:
-    """
-    response_text = model.generate(prompt)
-    try:
-        # The response might be in a code block, so we clean it
-        if "```json" in response_text:
-            cleaned_response = response_text.split("```json")[1].split("```")[0].strip()
-        else:
-            cleaned_response = response_text.strip()
-
-        question_data = json.loads(cleaned_response)
-
-        # Basic validation
-        if (
-            isinstance(question_data, dict)
-            and "question" in question_data
-            and "options" in question_data
-            and "answer" in question_data
-            and isinstance(question_data["options"], list)
-            and len(question_data["options"]) > 1
-            and question_data["answer"] in question_data["options"]
-        ):
-            return question_data
-        else:
-            st.error("Generated question has an invalid format.")
-            return None
-    except (json.JSONDecodeError, IndexError) as e:
-        st.error(f"Failed to decode the generated question JSON: {e}")
-        st.text_area("Problematic Model Output", response_text, height=200)
-        return None
 
 
 def handle_chat_message(query: str, model: ModelProvider) -> str:
@@ -641,7 +573,13 @@ def main():
                                     graph=st.session_state.session_graph,
                                     model=chat_model,
                                 )
-                                st.session_state.quiz_question = question_data
+                                if question_data is None:
+                                    st.error(
+                                        "Failed to generate a quiz question. Please try again."
+                                    )
+                                else:
+                                    st.session_state.quiz_question = question_data
+
                                 st.rerun()
                         else:
                             st.warning("No content available for quiz generation.")

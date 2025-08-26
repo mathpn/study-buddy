@@ -1,10 +1,67 @@
 import json
 import logging
 
+from pydantic import BaseModel
+
 from models import ModelProvider
 from pdf_processor import ImageChunk, TextChunk, VectorStore
+from graph import KnowledgeGraph
 
 logger = logging.getLogger(__name__)
+
+
+class QuestionSchema(BaseModel):
+    """Schema for a multiple-choice question."""
+
+    question: str
+    options: list[str]
+    answer: str
+
+
+def generate_question(
+    text_chunks: list[str], graph: KnowledgeGraph, model: ModelProvider
+) -> dict | None:
+    """
+    Generates a multiple-choice question from text chunks and a knowledge graph.
+
+    Args:
+        text_chunks (List[str]): A list of text chunks for context.
+        graph (KnowledgeGraph): The knowledge graph to base the question on.
+        model (ModelProvider): The language model to use for generation.
+
+    Returns:
+        dict: A dictionary containing the question, options, and correct answer, or None on failure.
+    """
+    graph_json = graph.model_dump_json(indent=2)
+    text_context = "\n---\n".join(text_chunks)
+    prompt = f"""
+    You are a helpful assistant designed to create study questions.
+    Based on the provided Knowledge Graph and text excerpts from a document, generate a single multiple-choice question.
+    The question MUST be related to the concepts and relationships in the Knowledge Graph.
+    The provided text excerpts are for additional context.
+
+    The question should be in JSON format with the following keys: "question", "options", "answer".
+    The "options" should be a list of 4 strings, where one is the correct answer.
+    The "answer" should be the string of the correct option.
+
+    Knowledge Graph:
+    ---
+    {graph_json}
+    ---
+
+    Text Excerpts:
+    ---
+    {text_context}
+    ---
+
+    JSON output:
+    """
+    response = model.generate_with_schema(prompt, schema=QuestionSchema)
+    if response is None:
+        logger.error("Failed to generate question.")
+        return None
+
+    return response.model_dump()
 
 
 class StudyBuddy:
