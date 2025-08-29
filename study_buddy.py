@@ -222,8 +222,8 @@ def generate_question(
     text_context = "\n---\n".join(text_chunks)
     system_prompt = """
     You are a helpful assistant designed to create study questions.
-    Based on the provided Knowledge Graph and text excerpts from a document, generate a single multiple-choice question.
-    The question MUST be related to the concepts and relationships in the Knowledge Graph.
+    Based on the provided knowledge graph and text excerpts from a document, generate a single multiple-choice question.
+    The question MUST be related to the concepts and relationships in the knowledge graph.
     The provided text excerpts are for additional context.
 
     The question should be in JSON format with the following keys: "question", "options", "answer".
@@ -241,8 +241,6 @@ def generate_question(
     ---
     {text_context}
     ---
-
-    JSON output:
     """
 
     messages = [
