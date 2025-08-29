@@ -243,7 +243,7 @@ def generate_question(
     ---
     """
 
-    messages = [
+    messages: list[ChatCompletionMessageParam] = [
         {
             "role": "system",
             "content": [{"type": "text", "text": dedent(system_prompt)}],
@@ -384,6 +384,7 @@ def chat(
         context = "\n---\n".join(context_parts)
         system_content += f"\n\nRelevant context from the document:\n{context}"
 
+    messages: list[ChatCompletionMessageParam] = []
     messages.append({"role": "system", "content": system_content})
     messages.extend(conversation_history)
     messages.append({"role": "user", "content": query})
@@ -448,7 +449,7 @@ class StudyBuddy:
                 "and identify knowledge gaps. Format your response as a JSON list of strings."
             )
 
-            messages = [
+            messages: list[ChatCompletionMessageParam] = [
                 {
                     "role": "system",
                     "content": [{"type": "text", "text": system_prompt}],
@@ -548,9 +549,15 @@ class StudyBuddy:
                 f"**Document Context:**\n{context}"
             )
 
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
+            messages: list[ChatCompletionMessageParam] = [
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": system_prompt}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": user_message}],
+                },
             ]
 
             self.study_plan = self.model.chat(messages=messages)
