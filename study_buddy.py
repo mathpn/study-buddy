@@ -1,6 +1,8 @@
 import logging
+import random
 from textwrap import dedent
 
+from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
 
 from graph import KnowledgeGraph, build_knowledge_graph, merge_knowledge_graphs
@@ -22,6 +24,184 @@ class AssessmentSchema(BaseModel):
     """Schema for a list of questions."""
 
     questions: list[str]
+
+
+class StudyTopicsSchema(BaseModel):
+    """Schema for extracted study topics."""
+
+    topics: list[str]
+
+
+class TopicSelectionSchema(BaseModel):
+    """Schema for topic selection priority."""
+
+    selected_topic: str
+    reasoning: str
+
+
+def get_or_extract_study_topics(
+    study_plan: str, model: ModelProvider, limit: int = 8
+) -> list[str]:
+    """Extract and cache study topics from study plan."""
+    fallback_topics = [
+        "Core concepts",
+        "Key principles",
+        "Important methods",
+        "Main theories",
+    ]
+    system_prompt = """
+    You are an educational assistant that extracts key study topics from a study plan.
+    Analyze the provided study plan and extract 5-8 core topics that should be covered in quizzes.
+    Focus on concrete concepts, theories, methods, or subject areas that can be tested.
+    Return topics that are specific enough to generate meaningful questions but broad enough to cover substantial content.
+    """
+
+    messages: list[ChatCompletionMessageParam] = [
+        {
+            "role": "system",
+            "content": [{"type": "text", "text": system_prompt}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": f"Study Plan:\n{study_plan}"}],
+        },
+    ]
+
+    try:
+        response = model.chat_with_schema(messages=messages, schema=StudyTopicsSchema)
+        if response is None:
+            logger.warning("Failed to extract topics from study plan, using fallback")
+            return fallback_topics
+
+        topics = response.topics[:limit]
+        logger.info("Extracted %d study topics from study plan", len(topics))
+        return topics
+
+    except Exception as e:
+        logger.error("Error extracting study topics: %s", e, exc_info=True)
+        return fallback_topics
+
+
+def select_next_quiz_topic(study_topics: list[str]) -> str:
+    return random.choice(study_topics)
+
+
+def retrieve_topic_content(
+    topic: str, vector_store: VectorStore, document_hash: str, top_k: int = 5
+) -> list:
+    """Perform targeted RAG retrieval for a specific topic."""
+    try:
+        focused_queries = [
+            topic,
+            f"concepts related to {topic}",
+            f"definition of {topic}",
+            f"examples of {topic}",
+        ]
+
+        all_chunks = []
+        seen_content = set()
+
+        for query in focused_queries:
+            chunks = vector_store.search_combined(query, document_hash, top_k=3)
+            for chunk, score in chunks:
+                if isinstance(chunk, TextChunk):
+                    content_hash = hash(chunk.content)
+                elif isinstance(chunk, ImageChunk):
+                    content_hash = hash(chunk.caption)
+                else:
+                    content_hash = hash(str(chunk))
+
+                if content_hash not in seen_content:
+                    seen_content.add(content_hash)
+                    all_chunks.append((chunk, score))
+
+        if not all_chunks:
+            logger.warning("No chunks found for any query related to topic '%s'", topic)
+            return []
+
+        all_chunks.sort(key=lambda x: x[1], reverse=True)
+        return all_chunks[:top_k]
+
+    except Exception as e:
+        logger.error(
+            "Error retrieving topic content for '%s': %s", topic, e, exc_info=True
+        )
+        return []
+
+
+def generate_topic_based_question(
+    topic: str,
+    retrieved_chunks: list,
+    model: ModelProvider,
+) -> dict | None:
+    """Generate quiz question focused on specific topic using retrieved content."""
+    try:
+        if not retrieved_chunks:
+            logger.warning("No retrieved chunks available for topic '%s'", topic)
+            return None
+
+        content_parts = []
+        for chunk, _ in retrieved_chunks:
+            if isinstance(chunk, TextChunk):
+                content_parts.append(chunk.content)
+            elif isinstance(chunk, ImageChunk):
+                content_parts.append(f"Image Caption: {chunk.caption}")
+
+        text_context = "\n---\n".join(content_parts)
+
+        system_prompt = f"""
+        You are a helpful assistant designed to create focused study questions.
+        Generate a single multiple-choice question specifically about: "{topic}"
+
+        Use the provided content and knowledge graph to create a question that:
+        1. Tests understanding of the specified topic
+        2. Is based on the actual document content provided
+        3. Has 4 plausible options with one clearly correct answer
+        4. Aligns with the study objectives shown in the study plan excerpt
+
+        The question should be in JSON format with the following keys: "question", "options", "answer".
+        The question MUST be grounded in the provided text content and focus on "{topic}".
+        """
+
+        user_prompt = f"""
+        Topic to focus on: {topic}
+
+        Relevant Content:
+        ---
+        {text_context}
+        ---
+
+        Create a multiple-choice question focused specifically on "{topic}" using the above content.
+        """
+
+        messages: list[ChatCompletionMessageParam] = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": system_prompt}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": user_prompt}],
+            },
+        ]
+
+        response = model.chat_with_schema(messages, schema=QuestionSchema)
+        if response is None:
+            logger.error("Failed to generate topic-based question for '%s'", topic)
+            return None
+
+        result = response.model_dump()
+        result["topic"] = topic
+        return result
+
+    except Exception as e:
+        logger.error(
+            "Error generating topic-based question for '%s': %s",
+            topic,
+            e,
+            exc_info=True,
+        )
+        return None
 
 
 def generate_question(
