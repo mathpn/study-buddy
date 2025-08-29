@@ -16,7 +16,15 @@ from pdf_processor import (
     VectorStore,
     hash_file,
 )
-from study_buddy import StudyBuddy, chat, generate_question
+from study_buddy import (
+    StudyBuddy,
+    chat,
+    generate_question,
+    generate_topic_based_question,
+    get_or_extract_study_topics,
+    retrieve_topic_content,
+    select_next_quiz_topic,
+)
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -55,6 +63,32 @@ def initialize_session_state():
         st.session_state.study_buddy = None
     if "document_hash" not in st.session_state:
         st.session_state.document_hash = None
+    if "study_topics" not in st.session_state:
+        st.session_state.study_topics = None
+    if "covered_quiz_topics" not in st.session_state:
+        st.session_state.covered_quiz_topics = set()
+    if "quiz_topic_performance" not in st.session_state:
+        st.session_state.quiz_topic_performance = {}
+
+
+def reset_quiz_state():
+    """Reset quiz-related session state variables."""
+    st.session_state.covered_quiz_topics = set()
+    st.session_state.quiz_topic_performance = {}
+    st.session_state.quiz_question = None
+    st.session_state.user_answer = None
+    st.session_state.show_feedback = False
+
+
+def display_study_topics():
+    """Display current study topics."""
+    if st.session_state.study_topics:
+        total_count = len(st.session_state.study_topics)
+
+        with st.expander(f"📚 Study Topics ({total_count} identified)", expanded=False):
+            st.write("**All Study Topics:**")
+            for i, topic in enumerate(st.session_state.study_topics, 1):
+                st.write(f"{i}. {topic}")
 
 
 def create_graph_visualization(graph: KnowledgeGraph):
@@ -484,36 +518,124 @@ def main():
                         "**Test your understanding with questions based on your study plan!**"
                     )
 
-                    # TODO use chat history and study plan to generate quiz questions
+                    display_study_topics()
+
                     if st.button("Generate New Question"):
                         st.session_state.quiz_question = None
                         st.session_state.user_answer = None
                         st.session_state.show_feedback = False
-                        if st.session_state.processed_chunks:
-                            with st.spinner("Generating question..."):
-                                num_chunks = min(
-                                    3, len(st.session_state.processed_chunks)
-                                )
-                                random_chunks = random.sample(
-                                    list(st.session_state.processed_chunks), num_chunks
-                                )
 
+                        if (
+                            not st.session_state.study_buddy
+                            or not st.session_state.study_buddy.get_study_plan()
+                        ):
+                            st.warning(
+                                "Please complete the study planning process first."
+                            )
+                        else:
+                            with st.spinner("Generating topic-focused question..."):
                                 chat_model = get_chat_model(chat_model_choice)
-                                question_data = generate_question(
-                                    text_chunks=random_chunks,
-                                    graph=st.session_state.session_graph,
-                                    model=chat_model,
-                                )
-                                if question_data is None:
+
+                                if st.session_state.study_topics is None:
+                                    st.info(
+                                        "Extracting key topics from your study plan..."
+                                    )
+                                    study_plan = (
+                                        st.session_state.study_buddy.get_study_plan()
+                                    )
+                                    st.session_state.study_topics = (
+                                        get_or_extract_study_topics(
+                                            study_plan, chat_model
+                                        )
+                                    )
+                                    logger.info(
+                                        "Cached %d study topics: %s",
+                                        len(st.session_state.study_topics),
+                                        st.session_state.study_topics,
+                                    )
+                                    st.success(
+                                        f"Identified {len(st.session_state.study_topics)} study topics!"
+                                    )
+
+                                if not st.session_state.study_topics:
                                     st.error(
-                                        "Failed to generate a quiz question. Please try again."
+                                        "Unable to extract study topics from your study plan. Please ensure your study plan contains clear learning objectives."
                                     )
                                 else:
-                                    st.session_state.quiz_question = question_data
+                                    selected_topic = select_next_quiz_topic(
+                                        st.session_state.study_topics
+                                    )
+
+                                    st.info(f"Focusing on topic: **{selected_topic}**")
+
+                                    with st.spinner(
+                                        f"Searching for content related to {selected_topic}..."
+                                    ):
+                                        retrieved_chunks = retrieve_topic_content(
+                                            selected_topic,
+                                            st.session_state.vector_store,
+                                            st.session_state.document_hash,
+                                            top_k=5,
+                                        )
+
+                                    logger.info(
+                                        f"Retrieved {len(retrieved_chunks)} chunks for topic: {selected_topic}"
+                                    )
+
+                                    if not retrieved_chunks:
+                                        st.warning(
+                                            f"No relevant content found for topic: **{selected_topic}**. Using fallback method."
+                                        )
+                                        # Fallback method if no content retrieved
+                                        if st.session_state.processed_chunks:
+                                            num_chunks = min(
+                                                3,
+                                                len(st.session_state.processed_chunks),
+                                            )
+                                            random_chunks = random.sample(
+                                                list(st.session_state.processed_chunks),
+                                                num_chunks,
+                                            )
+                                            question_data = generate_question(
+                                                text_chunks=random_chunks,
+                                                graph=st.session_state.session_graph,
+                                                model=chat_model,
+                                            )
+                                        else:
+                                            question_data = None
+                                    else:
+                                        with st.spinner(
+                                            f"Creating question for {selected_topic}..."
+                                        ):
+                                            study_plan = st.session_state.study_buddy.get_study_plan()
+                                            question_data = (
+                                                generate_topic_based_question(
+                                                    selected_topic,
+                                                    retrieved_chunks,
+                                                    chat_model,
+                                                )
+                                            )
+
+                                        if question_data:
+                                            st.session_state.covered_quiz_topics.add(
+                                                selected_topic
+                                            )
+                                            logger.info(
+                                                f"Added topic to covered set: {selected_topic}"
+                                            )
+
+                                    if question_data is None:
+                                        st.error(
+                                            "❌ Failed to generate a quiz question. This might be due to insufficient content or model issues. Please try again."
+                                        )
+                                    else:
+                                        st.session_state.quiz_question = question_data
+                                        if "topic" in question_data:
+                                            st.success(
+                                                f"✅ **Generated question for:** {question_data['topic']}"
+                                            )
 
                                 st.rerun()
-                        else:
-                            st.warning("No content available for quiz generation.")
 
                     if (
                         st.session_state.quiz_question
@@ -551,21 +673,115 @@ def main():
                             st.success(
                                 f"**Correct!** The right answer is **{correct_answer}**."
                             )
+                            if "topic" in q_data:
+                                topic = q_data["topic"]
+                                if topic not in st.session_state.quiz_topic_performance:
+                                    st.session_state.quiz_topic_performance[topic] = {
+                                        "correct": 0,
+                                        "total": 0,
+                                    }
+                                st.session_state.quiz_topic_performance[topic][
+                                    "correct"
+                                ] += 1
+                                st.session_state.quiz_topic_performance[topic][
+                                    "total"
+                                ] += 1
                         else:
                             st.error(
                                 f"**Incorrect.** You chose: *{user_answer}*. The correct answer is **{correct_answer}**."
                             )
+                            # Track topic performance
+                            if "topic" in q_data:
+                                topic = q_data["topic"]
+                                if topic not in st.session_state.quiz_topic_performance:
+                                    st.session_state.quiz_topic_performance[topic] = {
+                                        "correct": 0,
+                                        "total": 0,
+                                    }
+                                st.session_state.quiz_topic_performance[topic][
+                                    "total"
+                                ] += 1
+
+                        # Display topic performance if available
+                        if (
+                            "topic" in q_data
+                            and st.session_state.quiz_topic_performance
+                        ):
+                            topic = q_data["topic"]
+                            if topic in st.session_state.quiz_topic_performance:
+                                perf = st.session_state.quiz_topic_performance[topic]
+                                accuracy = (
+                                    perf["correct"] / perf["total"] * 100
+                                    if perf["total"] > 0
+                                    else 0
+                                )
+                                st.info(
+                                    f"📈 **{topic}** accuracy: {perf['correct']}/{perf['total']} ({accuracy:.1f}%)"
+                                )
 
             with col2:
                 st.header("🧠 Knowledge Graph")
                 graph_fig = create_graph_visualization(st.session_state.session_graph)
                 st.plotly_chart(graph_fig, use_container_width=True)
 
+                # Display overall quiz performance summary
+                if st.session_state.quiz_topic_performance:
+                    st.subheader("📊 Quiz Performance Summary")
+                    total_questions = sum(
+                        perf["total"]
+                        for perf in st.session_state.quiz_topic_performance.values()
+                    )
+                    total_correct = sum(
+                        perf["correct"]
+                        for perf in st.session_state.quiz_topic_performance.values()
+                    )
+                    overall_accuracy = (
+                        (total_correct / total_questions * 100)
+                        if total_questions > 0
+                        else 0
+                    )
+
+                    st.metric(
+                        "Overall Performance",
+                        f"{total_correct}/{total_questions} ({overall_accuracy:.1f}%)",
+                    )
+
+                    for topic, perf in st.session_state.quiz_topic_performance.items():
+                        accuracy = (
+                            perf["correct"] / perf["total"] * 100
+                            if perf["total"] > 0
+                            else 0
+                        )
+                        if accuracy >= 80:
+                            st.success(
+                                f"🟢 **{topic}**: {perf['correct']}/{perf['total']} ({accuracy:.1f}%)"
+                            )
+                        elif accuracy >= 50:
+                            st.warning(
+                                f"🟡 **{topic}**: {perf['correct']}/{perf['total']} ({accuracy:.1f}%)"
+                            )
+                        else:
+                            st.error(
+                                f"🔴 **{topic}**: {perf['correct']}/{perf['total']} ({accuracy:.1f}%)"
+                            )
+
+                    if st.button("🔄 Reset Quiz Progress"):
+                        reset_quiz_state()
+                        st.success("✅ Quiz progress has been reset!")
+                        st.rerun()
+                elif st.session_state.study_topics:
+                    st.info(
+                        "📝 No quiz attempts yet. Generate your first question to start tracking performance!"
+                    )
+
                 # Option to restart study session
                 if st.button("🔄 Start New Study Session"):
                     st.session_state.app_state = "WAITING_FOR_GOALS"
                     st.session_state.study_buddy = None
                     st.session_state.conversation_history = []
+                    st.session_state.study_topics = None
+                    st.session_state.covered_quiz_topics = set()
+                    st.session_state.quiz_topic_performance = {}
                     st.rerun()
 
     else:
