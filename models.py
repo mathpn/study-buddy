@@ -36,7 +36,7 @@ class OllamaModel(ModelProvider):
         response = self.client.generate(model=self.model_name, prompt=prompt)
         return response["response"].strip()
 
-    def chat(self, messages: list[dict[str, str]]) -> str:
+    def chat(self, messages: list[ChatCompletionMessageParam]) -> str:
         """Handles chat with conversation history."""
         response = self.client.chat(model=self.model_name, messages=messages)
         return response["message"]["content"].strip()
