@@ -9,7 +9,7 @@ import streamlit as st
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
 from graph import KnowledgeGraph
-from models import ModelProvider, OllamaModel, OpenAIModel
+from models import AnthropicModel, ModelProvider, OllamaModel, OpenAIModel
 from pdf_processor import (
     ExtractionBackend,
     PDFProcessor,
@@ -244,6 +244,8 @@ def process_pdf_file(
             image_model = OllamaModel("granite3.2-vision")
         elif model_choice == "gpt-4.1-mini (OpenAI)":
             image_model = OpenAIModel("gpt-4.1-mini")
+        elif model_choice == "Claude Haiku (Anthropic)":
+            image_model = AnthropicModel("claude-3-5-haiku-latest")
         else:
             raise NotImplementedError(f"model not supported: {model_choice}")
 
@@ -320,6 +322,10 @@ def get_chat_model(chat_model_choice):
         return OllamaModel("qwen3")
     elif chat_model_choice == "gemma3 (Ollama)":
         return OllamaModel("gemma3")
+    elif chat_model_choice == "Claude Haiku (Anthropic)":
+        return AnthropicModel("claude-3-5-haiku-latest")
+    elif chat_model_choice == "Claude Sonnet 4 (Anthropic)":
+        return AnthropicModel("claude-sonnet-4-20250514")
     else:
         raise NotImplementedError(f"unsupported model: {chat_model_choice}")
 
@@ -344,10 +350,16 @@ def main():
 
         model_choice = st.selectbox(
             "Image Captioning Model",
-            ["gpt-4.1-mini (OpenAI)", "granite3.2-vision (Ollama)"],
+            [
+                "gpt-4.1-mini (OpenAI)",
+                "granite3.2-vision (Ollama)",
+                "Claude Haiku (Anthropic)",
+                "Claude Sonnet 4 (Anthropic)",
+            ],
             help="Model used for describing images in the PDF",
         )
 
+        # TODO too many places with model names
         chat_model_choice = st.selectbox(
             "Chat Model",
             [
@@ -356,6 +368,8 @@ def main():
                 "o4-mini (OpenAI)",
                 "qwen3 (Ollama)",
                 "gemma3 (Ollama)",
+                "Claude Haiku (Anthropic)",
+                "Claude Sonnet 4 (Anthropic)",
             ],
             help="Model used for answering questions",
         )
@@ -607,7 +621,9 @@ def main():
                                         with st.spinner(
                                             f"Creating question for {selected_topic}..."
                                         ):
-                                            study_plan = st.session_state.study_buddy.get_study_plan()
+                                            study_plan = (
+                                                st.session_state.study_buddy.get_study_plan()
+                                            )
                                             question_data = (
                                                 generate_topic_based_question(
                                                     selected_topic,
