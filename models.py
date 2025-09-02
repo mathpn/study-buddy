@@ -1,12 +1,13 @@
 import os
 from abc import ABC, abstractmethod
+from sys import exc_info
 from typing import Type, TypeVar
 
 import anthropic
 import ollama
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -145,13 +146,14 @@ class AnthropicModel(ModelProvider):
         system_message = anthropic.NotGiven()
         anthropic_messages = []
 
+        # FIXME there are type issues here
         for msg in messages:
             role = msg["role"]
             if role == "system":
-                system_message = str(msg.get("content", ""))
+                system_message = msg["content"][0].get("text", "")
             elif role in ["assistant", "user"]:
                 anthropic_messages.append(
-                    {"role": role, "content": msg.get("content", "")}
+                    {"role": role, "content": msg["content"][0].get("text", "")}
                 )
 
         # Add schema instruction to the last user message
