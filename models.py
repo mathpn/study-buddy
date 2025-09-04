@@ -170,7 +170,10 @@ class AnthropicModel(ModelProvider):
 
         try:
             return schema.model_validate_json(response.content[0].text)
-        except Exception:
+        except ValidationError as e:
+            # TODO use logger
+            print(f"Failed to parse response into schema: {e}")
+            print(f"Response content: {response.content}")
             return None
 
     def generate_with_images(self, prompt: str, images_b64: list[str]) -> str:
