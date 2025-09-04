@@ -4,7 +4,10 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
+from logger import setup_logger
 from models import ModelProvider
+
+logger = setup_logger(__name__)
 
 
 class NodeType(str, Enum):
@@ -67,6 +70,8 @@ class KnowledgeGraph(BaseModel):
 
 
 def build_knowledge_graph(chunk: str, model: ModelProvider) -> KnowledgeGraph | None:
+    """Builds a knowledge graph from a text chunk using a model."""
+    logger.info("Building knowledge graph from chunk")
     system_prompt = """
     ## Task
     Extract a knowledge graph from the provided document chunk, focusing on concepts essential for studying and understanding the material.
@@ -130,7 +135,7 @@ def build_knowledge_graph(chunk: str, model: ModelProvider) -> KnowledgeGraph | 
     {DOCUMENT_CHUNK}
     """
 
-    return model.chat_with_schema(
+    graph = model.chat_with_schema(
         [
             {
                 "role": "system",
@@ -149,6 +154,15 @@ def build_knowledge_graph(chunk: str, model: ModelProvider) -> KnowledgeGraph | 
         KnowledgeGraph,
     )
 
+    if graph:
+        logger.info(
+            f"Successfully built graph with {len(graph.nodes)} nodes and {len(graph.relationships)} relationships."
+        )
+    else:
+        logger.warning("Failed to build knowledge graph from chunk.")
+
+    return graph
+
 
 def merge_knowledge_graphs(
     main_graph: KnowledgeGraph, new_graph: KnowledgeGraph
@@ -161,16 +175,27 @@ def merge_knowledge_graphs(
         main_graph: The cumulative session graph to merge into
         new_graph: The new graph fragment to merge
     """
+    logger.info("Merging new knowledge graph into main graph.")
+    logger.debug(
+        f"Main graph before merge: {len(main_graph.nodes)} nodes, {len(main_graph.relationships)} relationships."
+    )
+    logger.debug(
+        f"New graph to merge: {len(new_graph.nodes)} nodes, {len(new_graph.relationships)} relationships."
+    )
+
     existing_node_ids = {node.id for node in main_graph.nodes}
     existing_relationships = {
         (rel.source, rel.target, rel.relationship) for rel in main_graph.relationships
     }
 
+    nodes_added = 0
     for node in new_graph.nodes:
         if node.id not in existing_node_ids:
             main_graph.nodes.append(node)
             existing_node_ids.add(node.id)
+            nodes_added += 1
 
+    rels_added = 0
     for relationship in new_graph.relationships:
         rel_key = (
             relationship.source,
@@ -180,23 +205,9 @@ def merge_knowledge_graphs(
         if rel_key not in existing_relationships:
             main_graph.relationships.append(relationship)
             existing_relationships.add(rel_key)
+            rels_added += 1
 
-
-if __name__ == "__main__":
-    from models import OpenAIModel
-
-    model = OpenAIModel("gpt-4.1-mini")
-    chunk = """
-    Goodhart's law was first introduced by Goodhart (1984), and has later been elaborated upon by works such as Manheim &amp; Garrabrant (2019). Goodhart's law has also previously been studied in the context of machine learning. In particular, Hennessy &amp; Goodhart (2023) investigate Goodhart's law analytically in the context where a machine learning model is used to evaluate an agent's actions - unlike them, we specifically consider the RL setting. Ashton (2021) shows by example that RL systems can be susceptible to Goodharting in certain situations. In contrast, we show that Goodhart's law is a robust phenomenon across a wide range of environments, explain why it occurs in RL, and use it to devise new solution methods.
-
-    In the context of RL, Goodhart's law is closely related to reward gaming . Specifically, if reward gaming means an agent finding an unintended way to increase its reward, then Goodharting is an instance of reward gaming where optimisation of the proxy initially leads to desirable behaviour, followed by a decrease after some threshold. Krakovna et al. (2020) list illustrative examples of reward hacking, while Pan et al. (2021) manually construct proxy rewards for several environments and then demonstrate that most of them lead to reward hacking. Zhuang &amp; Hadfield-Menell (2020) consider proxy rewards that depend on a strict subset of the features which are relevant to the true reward and then show that optimising such a proxy in some cases may be arbitrarily bad, given certain assumptions. Skalse et al. (2022) introduce a theoretical framework for analysing reward hacking. They then demonstrate that, in any environment and for any true reward function, it is impossible to create a non-trivial proxy reward that is guaranteed to be unhackable. Also relevant, Everitt et al. (2017) study the related problem of reward corruption, Song et al. (2019) investigate overfitting in model-free RL due to faulty implications from correlations in the environment, and Pang et al. (2022) examine reward gaming in language models. Unlike these works, we analyse reward hacking through the lens of Goodhart's law and show that this perspective provides novel insights.
-
-    Gao et al. (2023) consider the setting where a large language model is optimised against a reward model that has been trained on a 'gold standard' reward function, and investigate how the performance of the language model according to the gold standard reward scales in the size of the language model, the amount of training data, and the size of the reward model. They find that the performance of the policy follows a Goodhart curve, where the slope gets less prominent for larger reward models and larger amounts of training data. Unlike them, we do not only focus on language, but rather, aim to establish to what extent Goodhart dynamics occur for a wide range of RL environments. Moreover, we also aim to explain Goodhart's law, and use it as a starting point for developing new algorithms.
-    """
-    from textwrap import dedent
-
-    kg = build_knowledge_graph(chunk, model)
-    if kg is not None:
-        print(kg.model_dump_json(indent=2))
-    else:
-        print("No knowledge graph generated")
+    logger.info(f"Added {nodes_added} new nodes and {rels_added} new relationships.")
+    logger.debug(
+        f"Main graph after merge: {len(main_graph.nodes)} nodes, {len(main_graph.relationships)} relationships."
+    )

@@ -1,4 +1,3 @@
-import logging
 import os
 import random
 import tempfile
@@ -9,6 +8,7 @@ import streamlit as st
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 
 from graph import KnowledgeGraph
+from logger import setup_logger
 from models import AnthropicModel, ModelProvider, OllamaModel, OpenAIModel
 from pdf_processor import (
     ExtractionBackend,
@@ -26,8 +26,7 @@ from study_buddy import (
     select_next_quiz_topic,
 )
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 st.set_page_config(
     page_title="Study Assistant",
