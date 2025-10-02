@@ -5,7 +5,10 @@ import tempfile
 import networkx as nx
 import plotly.graph_objects as go
 import streamlit as st
-from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
+from chromadb.utils.embedding_functions import (
+    OllamaEmbeddingFunction,
+    OpenAIEmbeddingFunction,
+)
 
 from graph import KnowledgeGraph
 from logger import setup_logger
@@ -229,7 +232,10 @@ def create_graph_visualization(graph: KnowledgeGraph):
 
 
 def process_pdf_file(
-    uploaded_file, model_choice: str, extraction_backend: ExtractionBackend
+    uploaded_file,
+    image_model_choice: str,
+    embedding_model_choice: str,
+    extraction_backend: ExtractionBackend,
 ):
     """Process uploaded PDF file"""
     try:
@@ -239,18 +245,32 @@ def process_pdf_file(
 
         st.session_state.processing_status = "Processing PDF..."
 
-        if model_choice == "granite3.2-vision (Ollama)":
+        if image_model_choice == "granite3.2-vision (Ollama)":
             image_model = OllamaModel("granite3.2-vision")
-        elif model_choice == "gpt-4.1-mini (OpenAI)":
+        elif image_model_choice == "gpt-4.1-mini (OpenAI)":
             image_model = OpenAIModel("gpt-4.1-mini")
-        elif model_choice == "Claude Haiku (Anthropic)":
+        elif image_model_choice == "Claude Haiku (Anthropic)":
             image_model = AnthropicModel("claude-3-5-haiku-latest")
         else:
-            raise NotImplementedError(f"model not supported: {model_choice}")
+            raise NotImplementedError(f"model not supported: {image_model_choice}")
 
+        if embedding_model_choice == "text-embedding-3-small (OpenAI)":
+            embedding_fn = OpenAIEmbeddingFunction(
+                os.environ["OPENAI_API_KEY"], "text-embedding-3-small"
+            )
+        elif embedding_model_choice == "text-embedding-3-large (OpenAI)":
+            embedding_fn = OpenAIEmbeddingFunction(
+                os.environ["OPENAI_API_KEY"], "text-embedding-3-large"
+            )
+        elif embedding_model_choice == "nomic-embed-text (Ollama)":
+            embedding_fn = OllamaEmbeddingFunction(model_name="nomic-embed-text")
+        else:
+            raise NotImplementedError(
+                f"embedding model not supported: {embedding_model_choice}"
+            )
         if st.session_state.vector_store is None:
             vector_store = VectorStore(
-                OllamaEmbeddingFunction(model_name="nomic-embed-text"),
+                embedding_fn,
                 persist_directory="./vector_store_streamlit",  # FIXME better path
             )
             st.session_state.vector_store = vector_store
@@ -347,7 +367,17 @@ def main():
 
         st.header("⚙️ Processing Settings")
 
-        model_choice = st.selectbox(
+        embedding_model_choice = st.selectbox(
+            "Embedding Model",
+            [
+                "text-embedding-3-small (OpenAI)",
+                "text-embedding-3-large (OpenAI)",
+                "nomic-embed-text (Ollama)",
+            ],
+            help="Model used for text embeddings",
+        )
+
+        image_model_choice = st.selectbox(
             "Image Captioning Model",
             [
                 "gpt-4.1-mini (OpenAI)",
@@ -385,7 +415,8 @@ def main():
                 with st.spinner("Processing PDF..."):
                     success = process_pdf_file(
                         uploaded_file,
-                        model_choice,
+                        image_model_choice,
+                        embedding_model_choice,
                         extraction_backend,
                     )
                     if success:
