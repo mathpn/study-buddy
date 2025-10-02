@@ -231,10 +231,45 @@ def create_graph_visualization(graph: KnowledgeGraph):
     return fig
 
 
+_chat_model_mapping = {
+    "GPT 4.1 (OpenAI)": ("openai", "gpt-4.1"),
+    "GPT 4.1 mini (OpenAI)": ("openai", "gpt-4.1-mini"),
+    "o4 mini (OpenAI)": ("openai", "o4-mini"),
+    "Qwen3 (Ollama)": ("ollama", "qwen3:latest"),
+    "Gemma3 (Ollama)": ("ollama", "gemma3:latest"),
+    "Claude Haiku (Anthropic)": ("anthropic", "claude-3-5-haiku-latest"),
+    "Claude Sonnet 4 (Anthropic)": ("anthropic", "claude-sonnet-4-20250514"),
+}
+
+_embedding_model_mapping = {
+    "text-embedding-3-small (OpenAI)": ("openai", "text-embedding-3-small"),
+    "text-embedding-3-large (OpenAI)": ("openai", "text-embedding-3-large"),
+    "nomic-embed-text (Ollama)": ("openai", "nomic-embed-text"),
+}
+
+_captioning_model_mapping = {
+    "gpt-4.1-mini (OpenAI)": ("openai", "gpt-4.1-mini"),
+    "granite3.2-vision (Ollama)": ("ollama", "granite3.2-vision"),
+    "Claude Haiku (Anthropic)": ("anthropic", "claude-3-5-haiku-latest"),
+    "Claude Sonnet 4 (Anthropic)": ("anthropic", "claude-sonnet-4-20250514"),
+}
+
+
+def _get_model(alias: str, mapping: dict[str, tuple[str, str]]) -> ModelProvider:
+    provider, model_name = mapping[alias]
+    if provider == "ollama":
+        return OllamaModel(model_name)
+    if provider == "openai":
+        return OpenAIModel(model_name)
+    if provider == "anthropic":
+        return AnthropicModel(model_name)
+    raise NotImplementedError(f"model not supported: {alias}")
+
+
 def process_pdf_file(
     uploaded_file,
-    image_model_choice: str,
-    embedding_model_choice: str,
+    captioning_model_alias: str,
+    embedding_model_alias: str,
     extraction_backend: ExtractionBackend,
 ):
     """Process uploaded PDF file"""
@@ -245,29 +280,20 @@ def process_pdf_file(
 
         st.session_state.processing_status = "Processing PDF..."
 
-        if image_model_choice == "granite3.2-vision (Ollama)":
-            image_model = OllamaModel("granite3.2-vision")
-        elif image_model_choice == "gpt-4.1-mini (OpenAI)":
-            image_model = OpenAIModel("gpt-4.1-mini")
-        elif image_model_choice == "Claude Haiku (Anthropic)":
-            image_model = AnthropicModel("claude-3-5-haiku-latest")
-        else:
-            raise NotImplementedError(f"model not supported: {image_model_choice}")
+        captioning_model = _get_model(captioning_model_alias, _captioning_model_mapping)
 
-        if embedding_model_choice == "text-embedding-3-small (OpenAI)":
+        provider, emb_model_name = _embedding_model_mapping[embedding_model_alias]
+        if provider == "openai":
             embedding_fn = OpenAIEmbeddingFunction(
-                os.environ["OPENAI_API_KEY"], "text-embedding-3-small"
+                os.environ["OPENAI_API_KEY"], emb_model_name
             )
-        elif embedding_model_choice == "text-embedding-3-large (OpenAI)":
-            embedding_fn = OpenAIEmbeddingFunction(
-                os.environ["OPENAI_API_KEY"], "text-embedding-3-large"
-            )
-        elif embedding_model_choice == "nomic-embed-text (Ollama)":
-            embedding_fn = OllamaEmbeddingFunction(model_name="nomic-embed-text")
+        elif provider == "ollama":
+            embedding_fn = OllamaEmbeddingFunction(model_name=emb_model_name)
         else:
             raise NotImplementedError(
-                f"embedding model not supported: {embedding_model_choice}"
+                f"embedding model not supported: {embedding_model_alias}"
             )
+
         if st.session_state.vector_store is None:
             vector_store = VectorStore(
                 embedding_fn,
@@ -279,7 +305,7 @@ def process_pdf_file(
         document_hash = hash_file(tmp_file_path)
         if not st.session_state.vector_store.document_exists(document_hash):
             processor = PDFProcessor(
-                image_captioning_model=image_model,
+                image_captioning_model=captioning_model,
                 extraction_backend=extraction_backend,
                 extract_images=True,
             )
@@ -330,25 +356,6 @@ def handle_chat_message(query: str, model: ModelProvider) -> str:
         return "Sorry, I've encountered an error, please try again"
 
 
-def get_chat_model(chat_model_choice):
-    if chat_model_choice == "gpt-4.1 (OpenAI)":
-        return OpenAIModel("gpt-4.1")
-    elif chat_model_choice == "gpt-4.1-mini (OpenAI)":
-        return OpenAIModel("gpt-4.1-mini")
-    elif chat_model_choice == "o4-mini (OpenAI)":
-        return OpenAIModel("o4-mini")
-    elif chat_model_choice == "qwen3 (Ollama)":
-        return OllamaModel("qwen3")
-    elif chat_model_choice == "gemma3 (Ollama)":
-        return OllamaModel("gemma3")
-    elif chat_model_choice == "Claude Haiku (Anthropic)":
-        return AnthropicModel("claude-3-5-haiku-latest")
-    elif chat_model_choice == "Claude Sonnet 4 (Anthropic)":
-        return AnthropicModel("claude-sonnet-4-20250514")
-    else:
-        raise NotImplementedError(f"unsupported model: {chat_model_choice}")
-
-
 def main():
     """Main Streamlit app with guided study experience"""
     initialize_session_state()
@@ -367,39 +374,21 @@ def main():
 
         st.header("⚙️ Processing Settings")
 
-        embedding_model_choice = st.selectbox(
+        embedding_model_alias = st.selectbox(
             "Embedding Model",
-            [
-                "text-embedding-3-small (OpenAI)",
-                "text-embedding-3-large (OpenAI)",
-                "nomic-embed-text (Ollama)",
-            ],
+            _embedding_model_mapping.keys(),
             help="Model used for text embeddings",
         )
 
-        image_model_choice = st.selectbox(
+        captioning_model_alias = st.selectbox(
             "Image Captioning Model",
-            [
-                "gpt-4.1-mini (OpenAI)",
-                "granite3.2-vision (Ollama)",
-                "Claude Haiku (Anthropic)",
-                "Claude Sonnet 4 (Anthropic)",
-            ],
+            _captioning_model_mapping.keys(),
             help="Model used for describing images in the PDF",
         )
 
-        # TODO too many places with model names
-        chat_model_choice = st.selectbox(
+        chat_model_alias = st.selectbox(
             "Chat Model",
-            [
-                "gpt-4.1 (OpenAI)",
-                "gpt-4.1-mini (OpenAI)",
-                "o4-mini (OpenAI)",
-                "qwen3 (Ollama)",
-                "gemma3 (Ollama)",
-                "Claude Haiku (Anthropic)",
-                "Claude Sonnet 4 (Anthropic)",
-            ],
+            _chat_model_mapping.keys(),
             help="Model used for answering questions",
         )
 
@@ -415,8 +404,8 @@ def main():
                 with st.spinner("Processing PDF..."):
                     success = process_pdf_file(
                         uploaded_file,
-                        image_model_choice,
-                        embedding_model_choice,
+                        captioning_model_alias,
+                        embedding_model_alias,
                         extraction_backend,
                     )
                     if success:
@@ -463,8 +452,7 @@ def main():
             if st.button("🚀 Start My Study Journey", type="primary"):
                 if study_goals.strip():
                     with st.spinner("Setting up your personalized study session..."):
-                        # Initialize StudyBuddy
-                        chat_model = get_chat_model(chat_model_choice)
+                        chat_model = _get_model(chat_model_alias, _chat_model_mapping)
                         st.session_state.study_buddy = StudyBuddy(
                             model=chat_model,
                             vector_store=st.session_state.vector_store,
@@ -472,7 +460,6 @@ def main():
                         )
                         st.session_state.study_buddy.set_study_goals(study_goals)
 
-                        # Generate assessment questions
                         st.session_state.study_buddy.generate_assessment_questions()
                         st.session_state.app_state = "ASSESSING"
                         st.rerun()
@@ -550,7 +537,7 @@ def main():
                     if query := st.chat_input(
                         "Ask a question about the document or your study plan..."
                     ):
-                        chat_model = get_chat_model(chat_model_choice)
+                        chat_model = _get_model(chat_model_alias, _chat_model_mapping)
                         st.chat_message("user").write(query)
                         with st.spinner("Thinking..."):
                             response = handle_chat_message(query, chat_model)
@@ -578,7 +565,9 @@ def main():
                             )
                         else:
                             with st.spinner("Generating topic-focused question..."):
-                                chat_model = get_chat_model(chat_model_choice)
+                                chat_model = _get_model(
+                                    chat_model_alias, _chat_model_mapping
+                                )
 
                                 if st.session_state.study_topics is None:
                                     st.info(
