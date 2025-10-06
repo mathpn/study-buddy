@@ -215,11 +215,11 @@ def generate_topic_based_question(
         messages: list[ChatCompletionMessageParam] = [
             {
                 "role": "system",
-                "content": [{"type": "text", "text": system_prompt}],
+                "content": [{"type": "text", "text": dedent(system_prompt)}],
             },
             {
                 "role": "user",
-                "content": [{"type": "text", "text": user_prompt}],
+                "content": [{"type": "text", "text": dedent(user_prompt)}],
             },
         ]
 
