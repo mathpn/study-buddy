@@ -365,7 +365,7 @@ def main():
     initialize_session_state()
 
     st.title("📚 Study Assistant")
-    st.markdown("Upload a PDF document for a personalized, guided study experience!")
+    st.markdown("Upload a PDF document for a guided study experience!")
 
     with st.sidebar:
         st.header("📁 Document Upload")
@@ -444,7 +444,7 @@ def main():
             st.header("🎯 Let's Set Your Study Goals")
             st.markdown(
                 "Before we begin, tell me what you want to learn from this document. "
-                "This will help me create a personalized study plan just for you!"
+                "This will help me create a study plan for you!"
             )
 
             study_goals = st.text_area(
@@ -455,7 +455,7 @@ def main():
 
             if st.button("🚀 Start My Study Journey", type="primary"):
                 if study_goals.strip():
-                    with st.spinner("Setting up your personalized study session..."):
+                    with st.spinner("Setting up your study session..."):
                         chat_model = _get_model(chat_model_alias, _chat_model_mapping)
                         st.session_state.study_buddy = StudyBuddy(
                             model=chat_model,
@@ -616,7 +616,9 @@ def main():
                                         )
 
                                     logger.info(
-                                        f"Retrieved {len(retrieved_chunks)} chunks for topic: {selected_topic}"
+                                        "Retrieved %d chunks for topic: %s",
+                                        len(retrieved_chunks),
+                                        selected_topic,
                                     )
 
                                     if not retrieved_chunks:
@@ -675,7 +677,8 @@ def main():
                                                 selected_topic
                                             )
                                             logger.info(
-                                                f"Added topic to covered set: {selected_topic}"
+                                                "Added topic to covered set: %s",
+                                                selected_topic,
                                             )
 
                                     if question_data is None:

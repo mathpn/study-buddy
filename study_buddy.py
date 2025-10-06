@@ -1,4 +1,3 @@
-import logging
 import random
 from textwrap import dedent
 
@@ -6,10 +5,11 @@ from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
 
 from graph import KnowledgeGraph, build_knowledge_graph, merge_knowledge_graphs
+from logger import setup_logger
 from models import ModelProvider
 from pdf_processor import ImageChunk, TextChunk, VectorStore
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class QuestionSchema(BaseModel):
@@ -224,7 +224,7 @@ def generate_topic_based_question(
         ]
 
         logger.info(
-            "generating a question for topic %s with difficulty %d", topic, difficulty
+            "Generating a question for topic %s with difficulty %d", topic, difficulty
         )
         response = model.chat_with_schema(messages, schema=QuestionSchema)
         if response is None:
@@ -440,7 +440,7 @@ def chat(
 
 
 class StudyBuddy:
-    """Manages personalized study sessions with assessment and planning."""
+    """Manages study sessions with assessment and planning."""
 
     def __init__(
         self, model: ModelProvider, vector_store: VectorStore, document_hash: str
@@ -547,7 +547,7 @@ class StudyBuddy:
         return all(answer.strip() for answer in self.assessment_answers)
 
     def generate_study_plan(self) -> None:
-        """Generate a personalized study plan based on goals and assessment answers."""
+        """Generate a study plan based on goals and assessment answers."""
         try:
             # Retrieve relevant chunks again for study plan context
             retrieved_chunks = self.vector_store.search_combined(
@@ -602,13 +602,13 @@ class StudyBuddy:
             ]
 
             self.study_plan = self.model.chat(messages=messages)
-            logger.info("Generated personalized study plan")
+            logger.info("Generated study plan")
 
         except Exception as e:
             logger.error("Error generating study plan: %s", e, exc_info=True)
             self.study_plan = (
                 "# Your Study Plan\n\n"
-                "I encountered an error generating your personalized study plan. "
+                "I encountered an error generating your study plan. "
                 "Please use the chat feature to ask specific questions about the topics you want to learn."
             )
 

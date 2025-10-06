@@ -1,6 +1,5 @@
 import os
 from abc import ABC, abstractmethod
-from sys import exc_info
 from typing import Type, TypeVar
 
 import anthropic

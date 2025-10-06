@@ -14,7 +14,6 @@ This module provides PDF processing capabilities including:
 import base64
 import hashlib
 import io
-import logging
 import os
 import re
 import uuid
@@ -33,10 +32,10 @@ from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from PIL import Image
 
+from logger import setup_logger
 from models import ModelProvider
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class ExtractionBackend(Enum):
@@ -127,7 +126,7 @@ def _extract_images_docling(docling_result: ConversionResult) -> list[ImageEleme
             pil_image = picture.get_image(doc)
             if pil_image is None:
                 logger.warning(
-                    f"No image data available for picture {picture.get_ref()}"
+                    "No image data available for picture %s", picture.get_ref()
                 )
                 continue
 
@@ -141,11 +140,13 @@ def _extract_images_docling(docling_result: ConversionResult) -> list[ImageEleme
             )
 
             logger.debug(
-                f"Extracted image from page {page_number} with {len(caption_text)} chars of caption"
+                "Extracted image from page %d with %d chars of caption",
+                page_number,
+                len(caption_text),
             )
 
         except Exception as e:
-            logger.warning(f"Failed to extract image: {e}")
+            logger.warning("Failed to extract image: %s", e)
 
     return images_and_text
 
@@ -205,12 +206,17 @@ def _extract_images_pymupdf(doc_source) -> list[ImageElement]:
                         )
                     )
                     logger.debug(
-                        f"Extracted image from page {page_num + 1} with {len(caption_text)} chars of caption"
+                        "Extracted image from page %d with %d chars of caption",
+                        page_num + 1,
+                        len(caption_text),
                     )
                 pix = None
             except Exception as e:
                 logger.warning(
-                    f"Failed to extract image {img_index} from page {page_num}: {e}"
+                    "Failed to extract image %s from page %d: %s",
+                    img_index,
+                    page_num,
+                    e,
                 )
     doc.close()
     return images_and_text
@@ -267,7 +273,7 @@ class PDFProcessor:
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
 
         logger.info(
-            f"Extracting text from {pdf_path} using {self.extraction_backend.value}"
+            "Extracting text from %s using %s", pdf_path, self.extraction_backend.value
         )
 
         images = []
@@ -283,7 +289,7 @@ class PDFProcessor:
                 f"Unsupported extraction backend: {self.extraction_backend}"
             )
 
-        logger.info(f"Extracted {len(text)} characters and {len(images)} images")
+        logger.info("Extracted %d characters and %d images", len(text), len(images))
         return text, images
 
     def chunk_text(self, text: str) -> list[TextChunk]:
@@ -296,7 +302,7 @@ class PDFProcessor:
         Returns:
             List of TextChunk objects
         """
-        logger.info(f"Chunking text using {self.chunking_strategy.value} strategy")
+        logger.info("Chunking text using %s strategy", self.chunking_strategy.value)
 
         if self.chunking_strategy == ChunkingStrategy.FIXED_SIZE:
             return self._chunk_by_fixed_size(text)
@@ -482,7 +488,7 @@ class PDFProcessor:
 
     def caption_images(self, image_chunks: list[ImageChunk]) -> list[ImageChunk]:
         """Generate captions for image chunks"""
-        logger.info(f"Generating captions for {len(image_chunks)} image chunks")
+        logger.info("Generating captions for %d image chunks", len(image_chunks))
 
         for i, chunk in enumerate(image_chunks):
             try:
@@ -500,11 +506,14 @@ class PDFProcessor:
                 )
                 chunk.description = description
                 logger.info(
-                    f"Generated caption for image {i + 1}/{len(image_chunks)}: {description[:100]}..."
+                    "Generated caption for image %d/%d: %s...",
+                    i + 1,
+                    len(image_chunks),
+                    description[:100],
                 )
 
             except Exception as e:
-                logger.error(f"Failed to process image {i}: {e}")
+                logger.error("Failed to process image %s: %s", i, e, exc_info=True)
                 chunk.description = None
 
         return image_chunks
@@ -557,7 +566,9 @@ class PDFProcessor:
         )
 
         logger.info(
-            f"PDF processing complete: {len(text_chunks)} text chunks, {len(image_chunks)} image chunks"
+            "PDF processing complete: %d text chunks, %d image chunks",
+            len(text_chunks),
+            len(image_chunks),
         )
         return processed_doc
 
@@ -608,7 +619,7 @@ class VectorStore:
         """Add a processed document to the vector store"""
         if self.document_exists(document_hash):
             logger.info(
-                f"Document with hash {document_hash} already exists, skipping..."
+                "Document with hash %s already exists, skipping...", document_hash
             )
             return
 
