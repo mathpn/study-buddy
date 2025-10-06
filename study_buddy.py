@@ -129,10 +129,31 @@ def retrieve_topic_content(
         return []
 
 
+def calc_question_difficulty(
+    correct_answers: int, streak: int, n_questions: int
+) -> int:
+    """Calculate question difficulty based on previous quiz performance."""
+    if n_questions == 0:
+        return 5
+
+    accuracy = correct_answers / n_questions
+    difficulty = round(
+        max(
+            1,
+            (max(0, 10 - n_questions) * 0.5 + min(10, n_questions) * accuracy),
+        )
+    )
+    difficulty += max(-3, min(3, streak))
+    difficulty = min(10, max(1, difficulty))
+    return difficulty
+
+
 def generate_topic_based_question(
     topic: str,
     retrieved_chunks: list,
     model: ModelProvider,
+    previous_questions: list[dict],
+    difficulty: int = 5,
 ) -> dict | None:
     """Generate quiz question focused on specific topic using retrieved content."""
     try:
@@ -149,6 +170,14 @@ def generate_topic_based_question(
 
         text_context = "\n---\n".join(content_parts)
 
+        previous_questions_str = "\n".join(
+            [f"- {q['question']}" for q in previous_questions if "question" in q]
+        )
+        previous_questions_prompt = (
+            f"These questions were already asked:\n{previous_questions_str}"
+            if previous_questions_str
+            else "No previous questions."
+        )
         system_prompt = f"""
         You are a helpful assistant designed to create focused study questions.
         Generate a single multiple-choice question specifically about: "{topic}"
@@ -158,7 +187,15 @@ def generate_topic_based_question(
         2. Is based on the actual document content provided
         3. Has 4 plausible options with one clearly correct answer
         4. Aligns with the study objectives shown in the study plan excerpt
+        5. Do not repeat questions that have already been asked
 
+        {previous_questions_prompt}
+        
+        Consider a difficulty index in which 1 refers to a question that requires only basic
+        text comprehension, and 10 requires deep knowledge about the topic.
+        Questions of level 8 and above must present a significant challenge for the student.
+        For difficult questions, prefer creating a context in which the concepts are applied.
+        Generate a question with a difficulty of {difficulty}.
         The question should be in JSON format with the following keys: "question", "options", "answer".
         The question MUST be grounded in the provided text content and focus on "{topic}".
         """
@@ -172,6 +209,7 @@ def generate_topic_based_question(
         ---
 
         Create a multiple-choice question focused specifically on "{topic}" using the above content.
+        The user does not see the content, only the question.
         """
 
         messages: list[ChatCompletionMessageParam] = [
@@ -185,6 +223,9 @@ def generate_topic_based_question(
             },
         ]
 
+        logger.info(
+            "generating a question for topic %s with difficulty %d", topic, difficulty
+        )
         response = model.chat_with_schema(messages, schema=QuestionSchema)
         if response is None:
             logger.error("Failed to generate topic-based question for '%s'", topic)

@@ -21,6 +21,7 @@ from pdf_processor import (
 )
 from study_buddy import (
     StudyBuddy,
+    calc_question_difficulty,
     chat,
     generate_question,
     generate_topic_based_question,
@@ -71,12 +72,15 @@ def initialize_session_state():
         st.session_state.covered_quiz_topics = set()
     if "quiz_topic_performance" not in st.session_state:
         st.session_state.quiz_topic_performance = {}
+    if "quiz_topic_questions" not in st.session_state:
+        st.session_state.quiz_topic_questions = {}
 
 
 def reset_quiz_state():
     """Reset quiz-related session state variables."""
     st.session_state.covered_quiz_topics = set()
     st.session_state.quiz_topic_performance = {}
+    st.session_state.quiz_topic_questions = {}
     st.session_state.quiz_question = None
     st.session_state.user_answer = None
     st.session_state.show_feedback = False
@@ -643,12 +647,27 @@ def main():
                                             study_plan = (
                                                 st.session_state.study_buddy.get_study_plan()
                                             )
-                                            question_data = (
-                                                generate_topic_based_question(
-                                                    selected_topic,
-                                                    retrieved_chunks,
-                                                    chat_model,
+                                            difficulty = 5
+                                            if (
+                                                selected_topic
+                                                in st.session_state.quiz_topic_performance
+                                            ):
+                                                perf = st.session_state.quiz_topic_performance[
+                                                    selected_topic
+                                                ]
+                                                difficulty = calc_question_difficulty(
+                                                    perf["correct"],
+                                                    perf["streak"],
+                                                    perf["total"],
                                                 )
+                                            question_data = generate_topic_based_question(
+                                                selected_topic,
+                                                retrieved_chunks,
+                                                chat_model,
+                                                previous_questions=st.session_state.quiz_topic_questions.get(
+                                                    selected_topic, []
+                                                ),
+                                                difficulty=difficulty,
                                             )
 
                                         if question_data:
@@ -665,6 +684,12 @@ def main():
                                         )
                                     else:
                                         st.session_state.quiz_question = question_data
+                                        st.session_state.quiz_topic_questions.setdefault(
+                                            selected_topic, []
+                                        )
+                                        st.session_state.quiz_topic_questions[
+                                            selected_topic
+                                        ].append(question_data)
                                         if "topic" in question_data:
                                             st.success(
                                                 f"✅ **Generated question for:** {question_data['topic']}"
@@ -714,6 +739,7 @@ def main():
                                     st.session_state.quiz_topic_performance[topic] = {
                                         "correct": 0,
                                         "total": 0,
+                                        "streak": 0,
                                     }
                                 st.session_state.quiz_topic_performance[topic][
                                     "correct"
@@ -721,6 +747,17 @@ def main():
                                 st.session_state.quiz_topic_performance[topic][
                                     "total"
                                 ] += 1
+                                st.session_state.quiz_topic_performance[topic][
+                                    "streak"
+                                ] = (
+                                    max(
+                                        0,
+                                        st.session_state.quiz_topic_performance[topic][
+                                            "streak"
+                                        ],
+                                    )
+                                    + 1
+                                )
                         else:
                             st.error(
                                 f"**Incorrect.** You chose: *{user_answer}*. The correct answer is **{correct_answer}**."
@@ -732,10 +769,22 @@ def main():
                                     st.session_state.quiz_topic_performance[topic] = {
                                         "correct": 0,
                                         "total": 0,
+                                        "streak": 0,
                                     }
                                 st.session_state.quiz_topic_performance[topic][
                                     "total"
                                 ] += 1
+                                st.session_state.quiz_topic_performance[topic][
+                                    "streak"
+                                ] = (
+                                    min(
+                                        1,
+                                        st.session_state.quiz_topic_performance[topic][
+                                            "streak"
+                                        ],
+                                    )
+                                    - 1
+                                )
 
                         # Display topic performance if available
                         if (
