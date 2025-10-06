@@ -16,22 +16,30 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class ModelProvider(ABC):
-    @abstractmethod
-    def generate(self, prompt: str) -> str: ...
+    """Abstract base class for model providers."""
 
     @abstractmethod
-    def chat(self, messages: list[ChatCompletionMessageParam]) -> str: ...
+    def generate(self, prompt: str) -> str:
+        """Handles single-turn generation."""
 
     @abstractmethod
-    def generate_with_images(self, prompt: str, images_b64: list[str]) -> str: ...
+    def chat(self, messages: list[ChatCompletionMessageParam]) -> str:
+        """Handles chat with conversation history."""
+
+    @abstractmethod
+    def generate_with_images(self, prompt: str, images_b64: list[str]) -> str:
+        """Handles generation with image inputs."""
 
     @abstractmethod
     def chat_with_schema(
         self, messages: list[ChatCompletionMessageParam], schema: Type[T]
-    ) -> T | None: ...
+    ) -> T | None:
+        """Handles chat with response validation against a Pydantic schema."""
 
 
 class OllamaModel(ModelProvider):
+    """Ollama model provider."""
+
     def __init__(
         self,
         model_name: str,
@@ -73,6 +81,8 @@ class OllamaModel(ModelProvider):
 
 
 class OpenAIModel(ModelProvider):
+    """OpenAI model provider."""
+
     def __init__(self, model_name: str):
         self.model_name = model_name
         self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -84,7 +94,6 @@ class OpenAIModel(ModelProvider):
         return response.choices[0].message.content.strip()
 
     def chat(self, messages: list[ChatCompletionMessageParam]) -> str:
-        """Handles chat with conversation history."""
         response = self.client.chat.completions.create(
             model=self.model_name, messages=messages
         )
@@ -119,6 +128,8 @@ class OpenAIModel(ModelProvider):
 
 
 class AnthropicModel(ModelProvider):
+    """Anthropic model provider."""
+
     def __init__(self, model_name: str):
         self.model_name = model_name
         self.client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -132,7 +143,6 @@ class AnthropicModel(ModelProvider):
         return response.content[0].text.strip()
 
     def chat(self, messages: list[ChatCompletionMessageParam]) -> str:
-        """Handles chat with conversation history."""
         system_message = anthropic.NotGiven()
         anthropic_messages = []
 
@@ -184,8 +194,8 @@ class AnthropicModel(ModelProvider):
         try:
             return schema.model_validate_json(response.content[0].text)
         except ValidationError as e:
-            logger.error(f"Failed to parse response into schema: {e}")
-            logger.debug(f"Response content: {response.content}")
+            logger.error("Failed to parse response into schema: %s", e)
+            logger.debug("Response content: %s", response.content)
             return None
 
     def generate_with_images(self, prompt: str, images_b64: list[str]) -> str:
