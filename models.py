@@ -32,8 +32,14 @@ class ModelProvider(ABC):
 
 
 class OllamaModel(ModelProvider):
-    def __init__(self, model_name: str, host: str = "http://localhost:11434"):
+    def __init__(
+        self,
+        model_name: str,
+        thinking: bool = False,
+        host: str = "http://localhost:11434",
+    ):
         self.model_name = model_name
+        self.thinking = thinking
         self.client = ollama.Client(host)
 
     def generate(self, prompt: str) -> str:
@@ -42,7 +48,11 @@ class OllamaModel(ModelProvider):
 
     def chat(self, messages: list[ChatCompletionMessageParam]) -> str:
         """Handles chat with conversation history."""
-        response = self.client.chat(model=self.model_name, messages=messages)
+        response = self.client.chat(
+            model=self.model_name, messages=messages, think=self.thinking
+        )
+        if self.thinking:
+            logger.debug("Ollama thinking trace: %s", response["message"]["thinking"])
         return response["message"]["content"].strip()
 
     def chat_with_schema(

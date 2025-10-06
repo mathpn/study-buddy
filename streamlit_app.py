@@ -245,6 +245,8 @@ _chat_model_mapping = {
     "Claude Sonnet 4 (Anthropic)": ("anthropic", "claude-sonnet-4-20250514"),
 }
 
+_ollama_thinking_models = {"qwen3:latest"}
+
 _embedding_model_mapping = {
     "text-embedding-3-small (OpenAI)": ("openai", "text-embedding-3-small"),
     "text-embedding-3-large (OpenAI)": ("openai", "text-embedding-3-large"),
@@ -262,7 +264,7 @@ _captioning_model_mapping = {
 def _get_model(alias: str, mapping: dict[str, tuple[str, str]]) -> ModelProvider:
     provider, model_name = mapping[alias]
     if provider == "ollama":
-        return OllamaModel(model_name)
+        return OllamaModel(model_name, thinking=model_name in _ollama_thinking_models)
     if provider == "openai":
         return OpenAIModel(model_name)
     if provider == "anthropic":
