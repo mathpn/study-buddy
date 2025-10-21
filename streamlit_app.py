@@ -1,14 +1,16 @@
 import os
 import random
 import tempfile
+from pathlib import Path
 
 import networkx as nx
-import plotly.graph_objects as go
+import plotly.graph_objs as go
 import streamlit as st
 from chromadb.utils.embedding_functions import (
     OllamaEmbeddingFunction,
     OpenAIEmbeddingFunction,
 )
+from platformdirs import user_data_dir
 
 from graph import KnowledgeGraph
 from logger import setup_logger
@@ -301,9 +303,13 @@ def process_pdf_file(
             )
 
         if st.session_state.vector_store is None:
+            app_data_dir = user_data_dir("study-thing")
+            persist_dir = os.path.join(app_data_dir, "vector_store_streamlit")
+            os.makedirs(persist_dir, exist_ok=True)
+            logger.debug("Creating vector store at %s", persist_dir)
             vector_store = VectorStore(
                 embedding_fn,
-                persist_directory="./vector_store_streamlit",  # FIXME better path
+                persist_directory=persist_dir,
             )
             st.session_state.vector_store = vector_store
 
