@@ -303,7 +303,7 @@ def process_pdf_file(
             )
 
         if st.session_state.vector_store is None:
-            app_data_dir = user_data_dir("study-thing")
+            app_data_dir = user_data_dir("study-buddy")
             persist_dir = os.path.join(app_data_dir, "vector_store_streamlit")
             os.makedirs(persist_dir, exist_ok=True)
             logger.debug("Creating vector store at %s", persist_dir)

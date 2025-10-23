@@ -1,7 +1,7 @@
 [project]
-name = "study-thing"
+name = "study-buddy"
 version = "0.1.0"
-description = "Add your description here"
+description = "An AI-powered study assistant for interactive learning from PDFs."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
